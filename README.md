@@ -1,5 +1,4 @@
-<img width="1024" height="683" alt="image" src="https://github.com/user-attachments/assets/1451d9b4-308d-4a16-9855-9094bbb61277" />
-
+<img width="2042" height="1136" alt="image" src="https://github.com/user-attachments/assets/b0ea8a00-8bfd-4c8a-9388-a44a25796ced" />
 
 # Skills Library for Storefront Agents
 
