@@ -1,3 +1,6 @@
+<img width="1024" height="683" alt="image" src="https://github.com/user-attachments/assets/1451d9b4-308d-4a16-9855-9094bbb61277" />
+
+
 # Skills Library for Storefront Agents
 
 The main point of this repo is to provide skills tailored specifically for **storefront**: e-commerce, product showcases, and shopping experiences.
