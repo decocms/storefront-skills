@@ -372,6 +372,31 @@ These are set in:
 - `deco/runtime/middleware.ts` - Page/route headers
 - `apps/website/handlers/fresh.ts` - Page block state
 
+## PR Workflow
+
+When opening a pull request after running e2e tests, **always include the performance report in the PR description**. Copy the full performance summary output (the table with TTFB, FCP, lazy section counts, and cache analysis) into the PR body so reviewers can see the results at a glance.
+
+Example PR description:
+
+```markdown
+## Performance Report
+
+### Desktop
+┌──────────────────┬─────────────┬─────────────┬────────┐
+│ Page             │       TTFB  │        FCP  │  Lazy  │
+├──────────────────┼─────────────┼─────────────┼────────┤
+│ Homepage Cold    │ 🟢   414ms │  🟡  1508ms │     14 │
+│ Homepage Warm    │ 🟢   485ms │  🟢   560ms │      4 │
+│ PLP Cold         │ 🟢   456ms │  🟢   508ms │      3 │
+│ PDP Cold         │ 🟢   459ms │  🟢   520ms │      4 │
+└──────────────────┴─────────────┴─────────────┴────────┘
+
+### Mobile
+(same table for mobile-chrome project)
+```
+
+If baseline comparison was run, include the regression summary too.
+
 ## Next Steps
 
 1. Read `discovery.md` to learn how to find the correct selectors and paths
