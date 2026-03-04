@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEMPLATES_DIR="$SCRIPT_DIR/templates"
 
 # Escape special sed characters in SITE_NAME to prevent breakage with / & \ etc.
-SITE_NAME_ESCAPED=$(printf '%s\n' "$SITE_NAME" | sed 's/[&/\]/\\&/g')
+SITE_NAME_ESCAPED=$(printf '%s\n' "$SITE_NAME" | sed 's/[&/\|]/\\&/g')
 
 echo "🚀 Scaffolding E2E tests for: $SITE_NAME"
 echo "   Site path: $SITE_PATH"
