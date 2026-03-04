@@ -1,3 +1,8 @@
+---
+name: deco-html-cache-investigation
+description: Investigate why specific Deco pages are not receiving HTML cache headers. Use when pages expected to be cached return no cache headers or no-store.
+---
+
 # HTML Cache Investigation
 
 Use this skill when a storefront page should be cacheable but is returning no cache headers or `no-store`.
