@@ -18,3 +18,5 @@ Use this skill to improve cache, you will check things like: cache HIT rate, cac
 
 - **html-size.md**
 Use this skill to reduce HTML size, you will find for elements that makes HTML bigger.
+- **html-cache-investigation.md**
+Use this skill to investigate why specific HTML pages are not caching, checking cache headers, Set-Cookie, and Deco cache gates.

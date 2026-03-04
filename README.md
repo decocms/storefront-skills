@@ -22,4 +22,5 @@ Keeps storefronts fast and responsive for users and Core Web Vitals.
 - **images** — Formats, sizing, lazy loading, and alt text for product and hero images.
 - **cache** — Cache HIT rate, cache-control headers, stale-while-revalidate (SWR), and immutable assets.
 - **html-size** — Reducing HTML payload and finding elements that unnecessarily inflate page size.
+- **html-cache-investigation** — Investigates why specific HTML pages are not caching (Cache-Control, Set-Cookie, and framework cache gates).
 
