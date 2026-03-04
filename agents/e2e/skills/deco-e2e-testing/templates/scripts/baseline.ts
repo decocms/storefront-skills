@@ -116,7 +116,7 @@ function listBaselines(): void {
         const filepath = join(BASELINES_DIR, file)
         const baseline = loadReport(filepath)
         if (baseline) {
-            const name = file.replace('baseline-', '').replace('.json', '')
+            const name = file === 'baseline.json' ? 'default' : file.replace('baseline-', '').replace('.json', '')
             console.log(`   ${name}`)
             console.log(`      Saved: ${baseline.savedAt || baseline.timestamp}`)
             console.log(`      Pages: ${baseline.metrics.length}`)
@@ -178,7 +178,7 @@ function compare(baselineName?: string): void {
             if (baseVal === null || currVal === null) continue
 
             const diff = currVal - baseVal
-            const diffPercent = (diff / baseVal) * 100
+            const diffPercent = baseVal === 0 ? (currVal === 0 ? 0 : 100) : (diff / baseVal) * 100
             const threshold = THRESHOLDS[metric]
 
             let status: 'improved' | 'regressed' | 'unchanged'

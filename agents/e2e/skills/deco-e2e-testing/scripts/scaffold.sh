@@ -16,6 +16,9 @@ SITE_NAME="${2:-my-site}"
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEMPLATES_DIR="$SCRIPT_DIR/templates"
 
+# Escape special sed characters in SITE_NAME to prevent breakage with / & \ etc.
+SITE_NAME_ESCAPED=$(printf '%s\n' "$SITE_NAME" | sed 's/[&/\]/\\&/g')
+
 echo "🚀 Scaffolding E2E tests for: $SITE_NAME"
 echo "   Site path: $SITE_PATH"
 echo "   Templates: $TEMPLATES_DIR"
@@ -31,11 +34,11 @@ mkdir -p "$E2E_DIR/reports"
 echo "📁 Creating files..."
 
 # package.json
-sed "s/{{SITE_NAME}}/$SITE_NAME/g" "$TEMPLATES_DIR/package.json" > "$E2E_DIR/package.json"
+sed "s|{{SITE_NAME}}|$SITE_NAME_ESCAPED|g" "$TEMPLATES_DIR/package.json" > "$E2E_DIR/package.json"
 echo "   ✓ package.json"
 
 # playwright.config.ts
-sed "s/{{SITE_NAME}}/$SITE_NAME/g" "$TEMPLATES_DIR/playwright.config.ts" > "$E2E_DIR/playwright.config.ts"
+sed "s|{{SITE_NAME}}|$SITE_NAME_ESCAPED|g" "$TEMPLATES_DIR/playwright.config.ts" > "$E2E_DIR/playwright.config.ts"
 echo "   ✓ playwright.config.ts"
 
 # tsconfig.json
@@ -43,7 +46,7 @@ cp "$TEMPLATES_DIR/tsconfig.json" "$E2E_DIR/tsconfig.json"
 echo "   ✓ tsconfig.json"
 
 # Test spec (needs manual customization)
-sed "s/{{SITE_NAME}}/$SITE_NAME/g" "$TEMPLATES_DIR/specs/ecommerce-flow.spec.ts" > "$E2E_DIR/specs/ecommerce-flow.spec.ts"
+sed "s|{{SITE_NAME}}|$SITE_NAME_ESCAPED|g" "$TEMPLATES_DIR/specs/ecommerce-flow.spec.ts" > "$E2E_DIR/specs/ecommerce-flow.spec.ts"
 echo "   ✓ specs/ecommerce-flow.spec.ts"
 
 # Metrics collector

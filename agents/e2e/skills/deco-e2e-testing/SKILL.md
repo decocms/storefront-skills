@@ -32,7 +32,7 @@ This skill helps you implement comprehensive e2e performance tests for Deco e-co
 2. Run scaffold.sh → Create test directory structure
 3. Replace {{PLACEHOLDERS}} → Customize for site
 4. Add deno.json tasks → Enable `deno task test:e2e`
-5. npm install && deno task test:e2e → Verify tests work
+5. cd tests/e2e && npm install && cd ../.. && deno task test:e2e → Verify tests work
 ```
 
 ## Directory Structure to Create
@@ -156,10 +156,16 @@ const LIVENESS_PATH = '/deco/_liveness'
 
 async function waitForServerReady(baseUrl: string) {
     // Step 1: Wait for liveness
+    let livenessOk = false
     for (let i = 0; i < 30; i++) {
-        const res = await fetch(`${baseUrl}/deco/_liveness`)
-        if (res.ok) break
+        try {
+            const res = await fetch(`${baseUrl}/deco/_liveness`)
+            if (res.ok) { livenessOk = true; break }
+        } catch {}
         await new Promise(r => setTimeout(r, 1000))
+    }
+    if (!livenessOk) {
+        throw new Error('Server liveness check failed after 30 attempts')
     }
 
     // Step 2: Warmup request to trigger lazy imports

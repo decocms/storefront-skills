@@ -111,11 +111,11 @@ const SITE_CONFIG = {
 Test your selectors before using them:
 
 ```javascript
-// Count matching elements
-document.querySelectorAll('a:has-text("R$")').length
+// Count matching elements (standard JS — :has-text is Playwright-only)
+[...document.querySelectorAll('a')].filter(a => a.textContent.includes('R$')).length
 
 // Check if element is visible
-document.querySelector('button:has-text("Comprar")')?.offsetParent !== null
+[...document.querySelectorAll('button')].find(b => b.textContent.includes('Comprar'))?.offsetParent !== null
 
 // Find all size buttons
 document.querySelectorAll('li button').forEach(b => console.log(b.textContent))

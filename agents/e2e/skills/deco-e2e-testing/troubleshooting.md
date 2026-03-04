@@ -118,8 +118,8 @@ await fetch(`${baseUrl}/?__d`, {
 ### Tests timeout
 
 **Possible causes:**
-1. Site not running
-2. Tunnel not open
+1. Local dev server not running
+2. Dev server crashed or port conflict
 3. Network issues
 
 **Diagnosis:**
@@ -131,7 +131,7 @@ curl -I http://localhost:8000
 deno task dev
 ```
 
-**Fix:** Start the dev server and ensure tunnel is active.
+**Fix:** Start the local dev server with `deno task dev` and ensure it is responding on the expected port.
 
 ### Products not loading on PLP
 

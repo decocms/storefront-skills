@@ -601,6 +601,14 @@ function printCacheAnalysis(metrics: PageMetrics[]) {
         console.log(`   │ ${icon} ${name} ${total} renders (${cached} cached, ${uncached} uncached)`)
     }
 
+    // Only print "no warnings" if every page with lazy renders is fully cached
+    const hasWarnings = metrics.some(m =>
+        m.pageName !== 'Add to Cart' &&
+        m.cacheAnalysis.lazyRenders.length > 0 &&
+        m.cacheAnalysis.lazyRendersUncached > 0
+    )
     console.log('')
-    console.log('   ✅ No cache warnings detected!')
+    if (!hasWarnings) {
+        console.log('   ✅ No cache warnings detected!')
+    }
 }

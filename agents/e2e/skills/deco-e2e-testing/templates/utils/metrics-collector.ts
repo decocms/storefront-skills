@@ -104,6 +104,8 @@ export class MetricsCollector {
     private page: Page
     private cdp: CDPSession | null = null
     private requests = new Map<string, NetworkEntry>()
+    private requestIdCounter = 0
+    private requestToId = new WeakMap<Request, string>()
     private errors: string[] = []
     private startTime = 0
     private serverTimingHeader: string | null = null
@@ -126,7 +128,9 @@ export class MetricsCollector {
 
         // Track network
         this.page.on('request', (req: Request) => {
-            this.requests.set(req.url() + Date.now(), {
+            const id = `req-${++this.requestIdCounter}`
+            this.requestToId.set(req, id)
+            this.requests.set(id, {
                 url: req.url(),
                 type: req.resourceType(),
                 startTime: Date.now(),
@@ -139,18 +143,21 @@ export class MetricsCollector {
         })
 
         this.page.on('response', async (res: Response) => {
-            const url = res.request().url()
-            const id = [...this.requests.keys()].find(k =>
-                this.requests.get(k)?.url === url &&
-                !this.requests.get(k)?.endTime
-            )
+            const req = res.request()
+            const url = req.url()
+            const id = this.requestToId.get(req)
             if (id) {
                 const entry = this.requests.get(id)!
                 entry.endTime = Date.now()
                 entry.status = res.status()
                 try {
-                    const body = await res.body().catch(() => null)
-                    entry.size = body?.length || parseInt(res.headers()['content-length'] || '0', 10)
+                    const contentLength = res.headers()['content-length']
+                    if (contentLength) {
+                        entry.size = parseInt(contentLength, 10)
+                    } else if (req.resourceType() === 'document' || url.includes('/deco/render')) {
+                        const body = await res.body().catch(() => null)
+                        entry.size = body?.length || 0
+                    }
                 } catch {}
             }
 
@@ -208,9 +215,7 @@ export class MetricsCollector {
 
         this.page.on('requestfailed', (req: Request) => {
             const url = req.url()
-            const id = [...this.requests.keys()].find(k =>
-                this.requests.get(k)?.url === url && !this.requests.get(k)?.endTime
-            )
+            const id = this.requestToId.get(req)
             if (id) {
                 const entry = this.requests.get(id)!
                 entry.endTime = Date.now()
@@ -233,7 +238,7 @@ export class MetricsCollector {
         if (!cacheControl) return false
 
         const hasMaxAge = /max-age=\d+/.test(cacheControl) && !/max-age=0/.test(cacheControl)
-        const hasSMaxAge = /s-maxage=\d+/.test(cacheControl)
+        const hasSMaxAge = /s-maxage=\d+/.test(cacheControl) && !/s-maxage=0/.test(cacheControl)
         const noStore = /no-store/.test(cacheControl)
         const noCache = /no-cache/.test(cacheControl)
 
@@ -372,6 +377,7 @@ export class MetricsCollector {
 
     startMeasurement(): void {
         this.requests.clear()
+        this.requestIdCounter = 0
         this.errors = []
         this.serverTimingHeader = null
         this.pageCacheControl = null
@@ -746,7 +752,7 @@ export class MetricsCollector {
     private formatBytes(bytes: number): string {
         if (bytes === 0) return '0 B'
         const k = 1024
-        const sizes = ['B', 'KB', 'MB']
+        const sizes = ['B', 'KB', 'MB', 'GB']
         const i = Math.floor(Math.log(bytes) / Math.log(k))
         return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
     }

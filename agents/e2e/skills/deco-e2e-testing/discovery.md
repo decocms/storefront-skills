@@ -243,8 +243,10 @@ cat components/minicart/Cart.tsx | head -50
 4. **Test selectors manually** in browser DevTools:
    ```javascript
    // In browser console on the live site:
-   document.querySelectorAll('a:has-text("R$")').length
-   document.querySelectorAll('button:has-text("Comprar")').length
+   // Count product links containing "R$"
+   [...document.querySelectorAll('a')].filter(a => a.textContent.includes('R$')).length
+   // Count buy buttons containing "Comprar"
+   [...document.querySelectorAll('button')].filter(b => b.textContent.includes('Comprar')).length
    ```
 5. **Fill in the checklist** and proceed to implementation
 

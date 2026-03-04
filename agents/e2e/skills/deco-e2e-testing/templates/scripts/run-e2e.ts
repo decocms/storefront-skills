@@ -120,6 +120,15 @@ async function startServer(): Promise<Deno.ChildProcess> {
     }
   })();
 
+  // Consume stderr to prevent the pipe buffer from filling up and blocking the process
+  (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of process.stderr) {
+      const text = decoder.decode(chunk);
+      console.error(text);
+    }
+  })();
+
   return process;
 }
 
@@ -127,7 +136,7 @@ async function runTests(headed: boolean = false, project?: string): Promise<bool
   const projectLabel = project || "all";
   console.log(`\n🧪 Running e2e tests (${projectLabel})${headed ? " (headed mode)" : ""}...\n`);
 
-  const args = ["test"];
+  const args = ["test", "--"];
   if (project) {
     args.push(`--project=${project}`);
   }
