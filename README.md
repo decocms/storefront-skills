@@ -15,6 +15,7 @@ Improves discoverability and indexing of storefront pages for search engines.
 - **robots** — `robots.txt` rules and directives for crawlers (allow/block, sitemap reference).
 - **sitemap** — XML sitemaps for products, categories, and key storefront URLs.
 - **structured-data** — Schema.org markup (Product, BreadcrumbList, etc.) for rich results.
+- **canonical-tag** — `<link rel="canonical">` rules and directives to manage URL authority and prevent duplicate content.
 
 ### ⚡ Performance
 Keeps storefronts fast and responsive for users and Core Web Vitals.

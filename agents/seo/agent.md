@@ -18,3 +18,5 @@ Use this skill to improve heading hierarchy and keyword usage. Check that H1–H
 - **structured-data.md** — Use this skill to add or fix Schema.org markup. Check Product, BreadcrumbList, and other relevant types so search engines can show rich results (prices, availability, ratings) where applicable.
 
 - **index.md** - Use this skill to check if the most important pages are indexed.
+
+- **canonical-tag.md** — Use this skill to manage URL authority and prevent duplicate content. Check that rel="canonical" tags are correctly implemented on product and category pages to consolidate link equity, handle URL parameters (like filters or sorting), and guide search engines to the preferred version of a page.
