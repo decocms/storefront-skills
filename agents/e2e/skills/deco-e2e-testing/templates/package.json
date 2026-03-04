@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "npx playwright test",
-    "test:headed": "HEADED=true npx playwright test --headed",
+    "test:headed": "npx playwright test --headed",
     "test:debug": "npx playwright test --debug",
     "install-browsers": "npx playwright install chromium",
     "baseline:save": "deno run -A scripts/baseline.ts save",
