@@ -25,3 +25,8 @@ Keeps storefronts fast and responsive for users and Core Web Vitals.
 - **html-size** — Reducing HTML payload and finding elements that unnecessarily inflate page size.
 - **html-cache-investigation** — Investigates why specific HTML pages are not caching (Cache-Control, Set-Cookie, and framework cache gates).
 
+### 🧪 E2E Testing
+End-to-end performance tests covering the full user journey: Home → PLP → PDP → Add to Cart.
+
+- **deco-e2e-testing** — Playwright-based e2e tests for Deco sites with lazy section tracking, cache analysis, Server-Timing observability, device-specific reports, and baseline comparison. Includes discovery guides, platform selectors (VTEX, Shopify, VNDA, Wake), scaffolding scripts, and troubleshooting.
+
