@@ -20,3 +20,9 @@ Use this skill to improve cache, you will check things like: cache HIT rate, cac
 Use this skill to reduce HTML size, you will find for elements that makes HTML bigger.
 - **html-cache-investigation.md**
 Use this skill to investigate why specific HTML pages are not caching, checking cache headers, Set-Cookie, and Deco cache gates.
+
+- **html-cache-report.md**
+Use this skill to analyze CDN cache performance for HTML pages using ClickHouse Stats Lake data. Generates a report with hit rates by request type, cache status breakdown, top uncached pages, and root cause analysis.
+
+- **loader-cache-report.md**
+Use this skill to analyze internal loader cache (LRU/filesystem) using HyperDX traces. Generates a report with hit/miss/stale rates, latency impact, deploy comparison, and loader config audit.
