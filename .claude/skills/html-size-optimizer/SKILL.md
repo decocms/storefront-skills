@@ -1,7 +1,6 @@
-# HTML Size
-
-HTML size affects TTFB and how long the browser takes to render the page. Below are common sources of bloat and how to reduce them.
-
+---
+name: html-size-optimizer
+description: Reduce HTML Size
 ---
 
 ## 1. JSON data for the framework

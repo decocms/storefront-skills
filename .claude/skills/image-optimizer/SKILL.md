@@ -1,3 +1,8 @@
+---
+name: image-optimizer
+description: Improve how images are being used in the website, you will check things like: Pre-load, Lazy-load, Format, Size.
+---
+
 # Images Skill
 
 Use this to improve how images are used on storefront and e-commerce pages. Check: pre-load, lazy-load, format, and size.
