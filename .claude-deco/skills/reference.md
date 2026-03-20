@@ -1,8 +1,3 @@
----
-name: deco
-description: Humans and Agents working together to evolve storefronts 24/7
----
-
 # deco.cx
 
 ## General rules
