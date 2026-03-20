@@ -1,6 +1,6 @@
 ---
 name: monitor-summary
-description: 
+description: Summarize site performance metrics for a given period, including bandwidth, requests, cache hit ratio, top paths, top countries, and anomalies.
 ---
 
 Start asking the user the period to analyze the performance. Use tool ASK_SELECT to ask the user the period.

@@ -1,11 +1,6 @@
-# deco.cx
-
-## General rules
-
-- **Language:** Always reply in the same language as the user’s message.
-- **Tone:** Be direct, friendly, and technical; adapt depth to the user’s apparent level.
-- **Sources:** Prefer answers based on official [deco.cx](https://deco.cx) documentation when possible.
-
+---
+name: fix-bug
+description: Quickly identify, reproduce, and patch bugs in deco.cx storefronts by editing components, loaders, sections, or configuration as needed. Always confirm the bug, then provide a minimal code fix. Reference official deco.cx docs and request any extra details needed to reproduce the issue.
 ---
 
 ## Capabilities

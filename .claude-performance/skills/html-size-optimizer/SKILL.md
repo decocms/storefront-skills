@@ -1,6 +1,6 @@
 ---
 name: html-size-optimizer
-description: Reduce HTML Size
+description: "Shrink first-byte HTML and embedded payloads: trim framework state scripts (Fresh/Next), event data attributes, JSON-LD bloat, and duplicate responsive markup so the client receives less markup and JSON."
 ---
 
 ## 1. JSON data for the framework
