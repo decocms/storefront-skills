@@ -42,6 +42,12 @@ Each loader can export a `cache` constant:
 
 If `cacheKey()` returns `null`, cache is bypassed for that request.
 
+### Stale window (STALE_TTL_PERIOD)
+
+After the TTL expires, the item enters a **stale** window where it continues to be served while a background revalidation runs. Default is 30s, but sites can override via the `STALE_TTL_PERIOD` env var (in ms).
+
+A high stale rate in HyperDX combined with a long `STALE_TTL_PERIOD` is expected behavior, not a problem.
+
 ### Critical: no-store contaminates entire page
 
 If **any** loader in a page render has `cache: "no-store"` (or no cache export at all), the entire HTML response gets `Cache-Control: no-store`. This is the #1 reason pages don't cache.

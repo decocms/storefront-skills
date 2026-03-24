@@ -26,3 +26,6 @@ Use this skill to analyze CDN cache performance for HTML pages using ClickHouse 
 
 - **loader-cache-report.md**
 Use this skill to analyze internal loader cache (LRU/filesystem) using HyperDX traces. Generates a report with hit/miss/stale rates, latency impact, deploy comparison, and loader config audit.
+
+- **sprites-report.md**
+Use this skill to analyze CDN traffic for `/sprites.svg` using ClickHouse Stats Lake. Reports which sites consume the most requests and bandwidth via sprites, and details cache performance per site.
