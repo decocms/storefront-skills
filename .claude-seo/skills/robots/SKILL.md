@@ -1,6 +1,6 @@
 ---
 name: robots
-description: Use this to manage URL authority and prevent duplicate content issues across the storefront
+description: Manages robots.txt rules to control crawler access, preserve crawl budget, and ensure proper indexing of the storefront.
 ---
 
 ## Robots.txt

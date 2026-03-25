@@ -1,6 +1,6 @@
 ---
 name: deduplicate-loaders
-description: Generate a executive summary of the site performance. 
+description: Finds and consolidates duplicate loaders across page JSONs to reduce redundant API calls.
 ---
 
 The main point is to reduce the number of API calls to the server.
