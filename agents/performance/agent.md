@@ -29,3 +29,6 @@ Use this skill to analyze internal loader cache (LRU/filesystem) using HyperDX t
 
 - **sprites-report.md**
 Use this skill to analyze CDN traffic for `/sprites.svg` using ClickHouse Stats Lake. Reports which sites consume the most requests and bandwidth via sprites, and details cache performance per site.
+
+- **html-cache-report-cloudflare.md**
+Use this skill to generate an HTML cache report scoped exclusively to Cloudflare CDN sites. Uses GraphQL to discover which sites are on Cloudflare, ClickHouse for CDN cache metrics, and HyperDX to correlate loader cache blockers.

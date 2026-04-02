@@ -16,11 +16,7 @@ Analyze **CDN traffic for `/sprites.svg`** using Azion/Cloudflare data from the 
 
 ## Prerequisites
 
-```bash
-export STATS_LAKE_URL="https://kpobssxane.us-east-1.aws.clickhouse.cloud:8443/"
-export STATS_LAKE_USER="default"
-export STATS_LAKE_PASSWORD="<password>"
-```
+You need to be connected to the deco ClickHouse Stats Lake. Ask a team member for credentials if you don't have them.
 
 ## Background: What is `/sprites.svg`
 
