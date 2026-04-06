@@ -18,7 +18,7 @@ End-to-end workflow for turning a Figma design file into a fully functional Deco
 
 - A Figma file URL (format: `https://figma.com/design/:fileKey/:fileName`)
 - A Deco storefront repository cloned locally
-- Figma MCP tools available (get_metadata, get_design_context, get_screenshot, use_figma)
+- Figma MCP tools available (get_metadata, get_design_context, get_screenshot, get_variable_defs, use_figma)
 - Playwright installed for QA phase
 
 ---
@@ -26,64 +26,192 @@ End-to-end workflow for turning a Figma design file into a fully functional Deco
 ## Workflow Overview
 
 ```
-Step 1 — Read & Map        Figma pages -> section inventory
-Step 2 — Implement         Create .tsx sections with Tailwind + Preact
-Step 3 — Assets            Download images, upload to Deco assets
-Step 4 — Loaders           Configure data sources for dynamic sections
-Step 5 — Visual QA         Playwright screenshots vs Figma baseline (desktop + mobile)
-Step 6 — Adjustments       Fix every mismatch found in QA
-Step 7 — Performance       Run performance skill on each section
-Step 8 — Functional E2E    Menu, search, cart, checkout flows (desktop + mobile)
+Step 1 — Discover & Map     Extract file key, list pages, map frames to sections
+Step 2 — Implement          Create .tsx sections with Tailwind + Preact + Islands
+Step 3 — Assets             Download images, upload to Deco assets
+Step 4 — Loaders            Configure data sources for dynamic sections
+Step 5 — Visual QA          Playwright screenshots vs Figma baseline (desktop + mobile)
+Step 6 — Adjustments        Fix every mismatch found in QA
+Step 7 — Performance        Run performance skills + accessibility checks
+Step 8 — Functional E2E     Menu, search, cart, checkout flows (desktop + mobile)
 ```
 
 ---
 
-## Step 1: Read & Map Figma Pages
+## Step 1: Discover & Map Figma File
 
-### 1.1 Extract file structure
+### 1.1 Extract the file key
 
-Use `get_metadata` on the root node (`0:1`) to list all pages and top-level frames:
+From the Figma URL:
+
+```
+https://figma.com/design/ABC123xyz/My-Store-Design?node-id=0-1
+                         ^^^^^^^^^^^
+                         This is the fileKey
+```
+
+### 1.2 List all pages
+
+Use `get_metadata` on the root node to list all pages and top-level frames:
 
 ```
 Tool: get_metadata
-  fileKey: <extracted from URL>
+  fileKey: "ABC123xyz"
   nodeId: "0:1"
 ```
 
-This returns an XML tree with page names, frame names, node IDs, positions, and sizes.
+The response is XML. Look for `<Page>` nodes at the top level. Map Figma pages to Deco routes:
 
-### 1.2 Build section inventory
+| Figma Page | Deco Route | Notes |
+|------------|------------|-------|
+| Home / Homepage | `/` | Main landing page |
+| PLP / Category / Collection | `/category/*` | Product listing |
+| PDP / Product | `/product/*` or `/:slug/p` | Product detail |
+| Search | `/s?q=*` | Search results |
+| Cart | `/checkout/cart` | Cart page |
+| Institutional | `/about`, `/contact` | Static pages |
+| Blog | `/blog`, `/blog/:slug` | Blog listing + post |
+| Components / Design System | N/A | Reusable elements, not a page |
 
-For each page in the Figma file:
+### 1.3 Map frames to sections
 
-1. List all top-level frames — each frame typically maps to one **section**
-2. Record for each frame:
-   - `nodeId` — needed for get_design_context
-   - `name` — becomes the section file name (e.g., `Hero`, `ProductShelf`, `Footer`)
-   - `page` — which Figma page it belongs to (Home, PLP, PDP, etc.)
-   - `width` — detect if it's a desktop frame (>=1024) or mobile frame (<1024)
-   - `position` — ordering on the page (top to bottom = render order)
+For each page, get the frame list:
 
-3. Group frames by page and identify:
-   - **Shared sections** that appear on multiple pages (Header, Footer, Newsletter)
-   - **Page-specific sections** (HeroBanner on Home, ProductGrid on PLP)
-   - **Desktop vs Mobile variants** of the same section
+```
+Tool: get_metadata
+  fileKey: "ABC123xyz"
+  nodeId: "<page-node-id>"
+```
 
-### 1.3 Output: Section Map
+Each top-level frame is usually one section. Record for each frame:
+
+- `nodeId` — needed for get_design_context
+- `name` — becomes the section file name (e.g., `Hero`, `ProductShelf`, `Footer`)
+- `page` — which Figma page it belongs to
+- `width` — detect viewport: frames wider than 1024px are desktop, 375px is the standard mobile width
+- `position` — ordering on the page (top to bottom = render order)
+
+#### Frame naming patterns
+
+Designers typically name frames like:
+
+- `Header` or `Navbar` -> `sections/Header/Header.tsx`
+- `Hero` or `Banner` -> `sections/Hero/HeroBanner.tsx`
+- `Product Shelf` or `Shelf` -> `sections/Product/ProductShelf.tsx`
+- `Categories` or `Category Grid` -> `sections/Category/CategoryGrid.tsx`
+- `Newsletter` or `CTA` -> `sections/Newsletter/Newsletter.tsx`
+- `Footer` -> `sections/Footer/Footer.tsx`
+- `Testimonials` or `Reviews` -> `sections/Social/Testimonials.tsx`
+- `FAQ` or `Accordion` -> `sections/Content/FAQ.tsx`
+- `Features` or `Benefits` -> `sections/Content/Features.tsx`
+
+#### Detecting desktop vs mobile variants
+
+- Look for pairs: `Hero - Desktop` + `Hero - Mobile`
+- If only desktop exists, implement responsive behavior with Tailwind breakpoints
+
+#### Detecting shared vs page-specific
+
+- **Shared**: Header and Footer appear on every page
+- **Shared**: Newsletter/CTA may appear on multiple pages
+- **Page-specific**: Hero only on Home, ProductGrid only on PLP
+
+### 1.4 Extract design tokens
+
+Use `get_variable_defs` to extract the Figma design tokens:
+
+```
+Tool: get_variable_defs
+  fileKey: "ABC123xyz"
+  nodeId: "<any-section-nodeId>"
+```
+
+Map tokens to Tailwind:
+
+| Figma Variable | Tailwind Config | Example |
+|---------------|-----------------|---------|
+| `color/primary` | `colors.primary` | `#FF6B00` |
+| `color/secondary` | `colors.secondary` | `#1A1A2E` |
+| `color/background` | `colors.background` | `#FFFFFF` |
+| `spacing/sm` | `spacing.sm` or default | `8px` |
+| `spacing/md` | `spacing.md` or default | `16px` |
+| `spacing/lg` | `spacing.lg` or default | `24px` |
+| `font/heading` | `fontFamily.heading` | `Inter` |
+| `font/body` | `fontFamily.body` | `Inter` |
+| `radius/default` | `borderRadius.DEFAULT` | `8px` |
+
+If the Deco site has a `tailwind.config.ts` or theme, match Figma colors to existing tokens. If new tokens are needed, extend the theme.
+
+### 1.5 Identify interactive elements (Islands)
+
+Scan each section for elements that need client-side behavior:
+
+| Element | Needs Island? | Island Name |
+|---------|--------------|-------------|
+| Static text/image | No | - |
+| Navigation links | No | - |
+| Carousel/Slider | Yes | `islands/Carousel.tsx` |
+| Accordion/FAQ | Yes | `islands/Accordion.tsx` |
+| Tab switcher | Yes | `islands/Tabs.tsx` |
+| Dropdown menu | Yes | `islands/Dropdown.tsx` |
+| Mobile hamburger | Yes | `islands/MobileMenu.tsx` |
+| Search bar | Yes | `islands/SearchBar.tsx` |
+| Add to cart button | Yes | `islands/AddToCart.tsx` |
+| Quantity selector | Yes | `islands/QuantitySelector.tsx` |
+| Image zoom | Yes | `islands/ImageZoom.tsx` |
+| Newsletter form | Yes | `islands/NewsletterForm.tsx` |
+
+### 1.6 Identify data sources
+
+For each section, determine if it needs dynamic data:
+
+**Static sections (no loader needed):**
+- Hero Banner with fixed content
+- Newsletter signup
+- Institutional text
+- Footer with links
+
+**Dynamic sections (needs loader):**
+
+| Data Type | Loader Path | Example Section |
+|-----------|-------------|-----------------|
+| Product list | `vtex/loaders/intelligentSearch/productList.ts` | ProductShelf, ProductGrid |
+| Product page | `vtex/loaders/intelligentSearch/productDetailsPage.ts` | ProductDetails |
+| Category tree | `vtex/loaders/categories/tree.ts` | CategoryMenu, MegaMenu |
+| Search results | `vtex/loaders/intelligentSearch/productListingPage.ts` | SearchResults, PLP |
+| Blog posts | `spire/loaders/BlogpostList.ts` | BlogPosts |
+
+> **Note:** The loader paths above are VTEX examples. Ask the user which platform they use (VTEX, Shopify, VNDA, Wake) and adjust loader paths accordingly.
+
+### 1.7 Output: Section map
 
 Produce a markdown table before proceeding:
 
 ```markdown
-| # | Section Name       | Figma Page | Node ID   | Type     | Variants     |
-|---|--------------------|------------|-----------|----------|--------------|
-| 1 | Header             | Global     | 123:456   | Shared   | Desktop, Mobile |
-| 2 | HeroBanner         | Home       | 123:789   | Specific | Desktop, Mobile |
-| 3 | ProductShelf       | Home       | 124:100   | Specific | Desktop only |
-| 4 | CategoryGrid       | PLP        | 125:200   | Specific | Desktop, Mobile |
-| ...                                                                        |
+| # | Section Name       | Figma Page | Node ID   | Type     | Variants        | Data Source | Islands |
+|---|--------------------|------------|-----------|----------|-----------------|-------------|---------|
+| 1 | Header             | Global     | 123:456   | Shared   | Desktop, Mobile | None        | MobileMenu, SearchBar |
+| 2 | HeroBanner         | Home       | 123:789   | Specific | Desktop, Mobile | Static      | Carousel |
+| 3 | ProductShelf       | Home       | 124:100   | Specific | Desktop only    | productList | None |
+| 4 | CategoryGrid       | PLP        | 125:200   | Specific | Desktop, Mobile | categories  | None |
+| ...                                                                                                   |
 ```
 
 **Present this table to the user for confirmation before implementing.**
+
+### 1.8 Implementation order
+
+Recommended order for building sections:
+
+1. **Header** — needed on all pages, establishes navigation
+2. **Footer** — needed on all pages, completes the page
+3. **Home Hero** — most visible section
+4. **Home sections** — remaining home page sections top to bottom
+5. **PLP sections** — product listing page
+6. **PDP sections** — product detail page
+7. **Other pages** — search, cart, institutional
+
+Build each section's Island at the same time as the section that needs it — this keeps the section functional immediately after creation.
 
 ---
 
@@ -163,29 +291,17 @@ export function LoadingFallback() {
 
 1. **Use `class` not `className`** — Preact + Deco convention
 2. **Tailwind CSS only** — no inline styles, no CSS modules
-3. **No client-side behavior** — no hooks, no onClick, no useState. Use Islands for interactivity
+3. **No client-side behavior in sections** — no hooks, no onClick, no useState. Use Islands for interactivity
 4. **Typed props with JSDoc** — `@title` for admin labels, `@hide` for internal props
 5. **Default values** — every prop must have a sensible default matching the Figma design
 6. **Responsive** — use Tailwind breakpoints (`md:`, `lg:`) for desktop/mobile
-7. **`LoadingFallback` export** — always include a skeleton loader
+7. **`LoadingFallback` export** — always include a skeleton loader matching section dimensions
 8. **Widget types** — use `ImageWidget` for images, `TextArea` for rich text, `Color` for colors
 9. **100% design fidelity** — match Figma spacing, colors, typography, and layout exactly
 
-### 2.4 Get Figma variables for theme matching
+### 2.4 Islands for interactive elements
 
-Use `get_variable_defs` to extract design tokens (colors, spacing, fonts):
-
-```
-Tool: get_variable_defs
-  fileKey: <fileKey>
-  nodeId: <any section nodeId>
-```
-
-Map Figma variables to Tailwind theme tokens. If the Deco site has a `tailwind.config.ts` or theme, match Figma colors to existing tokens. If new tokens are needed, extend the theme.
-
-### 2.5 Islands for interactive elements
-
-If a section requires client-side behavior (carousel, accordion, tabs, dropdown menu):
+When a section requires client-side behavior (carousel, accordion, tabs, dropdown menu), build the Island alongside the section:
 
 1. Create the interactive part as an Island in `islands/<ComponentName>.tsx`
 2. Import and use the Island inside the section
@@ -244,20 +360,7 @@ If the Figma file uses the "Export Original Images" plugin, assets may already b
 
 ## Step 4: Configure Loaders
 
-### 4.1 Identify dynamic sections
-
-Review each section and classify its data source:
-
-| Data Type | Loader Path | Example Section |
-|-----------|-------------|-----------------|
-| Product list | `vtex/loaders/intelligentSearch/productList.ts` | ProductShelf, ProductGrid |
-| Product page | `vtex/loaders/intelligentSearch/productDetailsPage.ts` | ProductDetails |
-| Category tree | `vtex/loaders/categories/tree.ts` | CategoryMenu, MegaMenu |
-| Search results | `vtex/loaders/intelligentSearch/productListingPage.ts` | SearchResults, PLP |
-| Blog posts | `spire/loaders/BlogpostList.ts` | BlogPosts |
-| Static content | No loader needed | HeroBanner, Newsletter |
-
-### 4.2 Add inline loaders for simple data
+### 4.1 Add inline loaders for simple data
 
 ```tsx
 import type { AppContext } from "apps/site.ts";
@@ -271,7 +374,7 @@ export const loader = async (props: Props, _req: Request, ctx: AppContext) => {
 };
 ```
 
-### 4.3 Use external loaders for reusable data
+### 4.2 Use external loaders for reusable data
 
 When multiple sections need the same data, use an external loader and type-match the prop:
 
@@ -284,7 +387,7 @@ export interface Props {
 
 This lets the Admin user pick any loader that returns `Product[]`.
 
-### 4.4 Ask user for integration details
+### 4.3 Ask user for integration details
 
 If the data source is unclear or requires API credentials, **ask the user**:
 
@@ -306,91 +409,126 @@ Tool: get_screenshot
   nodeId: <section nodeId>
 ```
 
-Save these to `tests/visual-qa/baselines/`:
+Save to:
 
 ```
-tests/visual-qa/
-  baselines/
-    desktop/
-      01-Header.png
-      02-HeroBanner.png
-      03-ProductShelf.png
-      ...
-    mobile/
-      01-Header.png
-      02-HeroBanner.png
-      ...
+tests/visual-qa/baselines/desktop/<order>-<SectionName>.png
+tests/visual-qa/baselines/mobile/<order>-<SectionName>.png
 ```
 
 ### 5.2 Capture implementation screenshots
 
-Use Playwright to screenshot each section as rendered in the Deco site:
+Use Playwright to screenshot each section at both viewports:
 
 ```typescript
-import { test } from "@playwright/test";
+import { chromium } from "playwright";
 
-const SECTIONS = [
-  { name: "Header", selector: "header", order: 1 },
-  { name: "HeroBanner", selector: '[data-section="HeroBanner"]', order: 2 },
-  // ... from section inventory
+const BASE_URL = "http://localhost:8000";
+
+const VIEWPORTS = {
+  desktop: { width: 1440, height: 900 },
+  mobile: { width: 375, height: 812 },
+};
+
+const PAGES = [
+  { name: "home", path: "/" },
+  { name: "plp", path: "/category" },
+  { name: "pdp", path: "/product/p" },
 ];
 
-const VIEWPORTS = [
-  { name: "desktop", width: 1440, height: 900 },
-  { name: "mobile", width: 375, height: 812 },
-];
+async function captureAll() {
+  const browser = await chromium.launch();
 
-for (const viewport of VIEWPORTS) {
-  test.describe(`${viewport.name} visual QA`, () => {
-    test.use({ viewport: { width: viewport.width, height: viewport.height } });
+  for (const [device, viewport] of Object.entries(VIEWPORTS)) {
+    const context = await browser.newContext({ viewport });
+    const page = await context.newPage();
 
-    for (const section of SECTIONS) {
-      test(`${section.name} matches Figma`, async ({ page }) => {
-        await page.goto("http://localhost:8000");
+    for (const p of PAGES) {
+      await page.goto(`${BASE_URL}${p.path}`);
+      await page.waitForLoadState("networkidle");
 
-        // Scroll to section
-        const el = page.locator(section.selector).first();
-        await el.scrollIntoViewIfNeeded();
-        await page.waitForTimeout(500); // wait for lazy load
-
-        // Screenshot section
-        await el.screenshot({
-          path: `tests/visual-qa/actual/${viewport.name}/${section.order}-${section.name}.png`,
-        });
+      // Full page screenshot
+      await page.screenshot({
+        path: `tests/visual-qa/actual/${device}/${p.name}-full.png`,
+        fullPage: true,
       });
+
+      // Individual section screenshots
+      const sections = await page.locator("[data-section]").all();
+      for (let i = 0; i < sections.length; i++) {
+        const name = await sections[i].getAttribute("data-section") || `section-${i}`;
+        await sections[i].scrollIntoViewIfNeeded();
+        await page.waitForTimeout(300);
+        await sections[i].screenshot({
+          path: `tests/visual-qa/actual/${device}/${p.name}-${i}-${name}.png`,
+        });
+      }
     }
-  });
+
+    await context.close();
+  }
+
+  await browser.close();
 }
+
+captureAll();
 ```
 
-### 5.3 Compare and generate adjustment list
+### 5.3 Comparison criteria
 
-For each section, compare the Figma baseline screenshot with the Playwright screenshot. Identify mismatches:
+For each section, check these aspects against the Figma baseline:
 
-- **Spacing** — margins, paddings, gaps
-- **Typography** — font size, weight, line height, letter spacing
-- **Colors** — backgrounds, text colors, borders
-- **Layout** — flex direction, alignment, grid columns
-- **Images** — sizing, aspect ratio, object-fit
-- **Responsiveness** — mobile layout differences
+**Layout:**
+- Flex direction matches (row vs column)
+- Alignment matches (start, center, end, space-between)
+- Grid columns match (2-col, 3-col, 4-col)
+- Section max-width and centering
+- Content ordering matches top-to-bottom, left-to-right
 
-Output an adjustment list:
+**Spacing:**
+- Padding inside the section
+- Margin between elements
+- Gap between grid/flex items
+- Section vertical spacing (padding-y)
+
+**Typography:**
+- Font family, size, weight, line height, letter spacing
+- Text color and alignment
+- Text transform (uppercase, capitalize)
+
+**Colors:**
+- Background, text, border, button, and link colors
+
+**Images:**
+- Correct image displayed, aspect ratio, object-fit, border radius, dimensions
+
+**Responsive:**
+- Desktop layout correct at 1440px
+- Mobile layout correct at 375px
+- Breakpoint transitions smooth (no layout jumps at 768px, 1024px)
+- Hidden elements properly hidden per viewport
+
+### 5.4 Generate adjustment list
+
+Output a structured adjustment table:
 
 ```markdown
 ## Visual QA Adjustments
 
-### Desktop
-| Section | Issue | Figma | Actual | Fix |
-|---------|-------|-------|--------|-----|
-| HeroBanner | Title font size | 48px | 36px | Change text-4xl to text-5xl |
-| ProductShelf | Card gap | 24px | 16px | Change gap-4 to gap-6 |
-| Footer | BG color | #1a1a1a | #000000 | Change bg-black to bg-[#1a1a1a] |
+### Desktop (1440px)
 
-### Mobile
-| Section | Issue | Figma | Actual | Fix |
-|---------|-------|-------|--------|-----|
-| Header | Menu icon missing | Present | Missing | Add hamburger Island |
-| HeroBanner | Image height | 300px | 400px | Add h-[300px] md:h-[400px] |
+| # | Section | Issue | Expected | Actual | Fix |
+|---|---------|-------|----------|--------|-----|
+| 1 | HeroBanner | Title font size | 48px | 36px | Change text-4xl to text-5xl |
+| 2 | ProductShelf | Card gap | 24px | 16px | Change gap-4 to gap-6 |
+| 3 | Footer | BG color | #1a1a1a | #000000 | Change bg-black to bg-[#1a1a1a] |
+
+### Mobile (375px)
+
+| # | Section | Issue | Expected | Actual | Fix |
+|---|---------|-------|----------|--------|-----|
+| 1 | Header | Menu icon missing | Present | Missing | Add MobileMenu Island |
+| 2 | HeroBanner | Image height | 300px | 400px | Add h-[300px] md:h-[400px] |
 ```
 
 ---
@@ -402,44 +540,50 @@ For each item in the adjustment list:
 1. Apply the fix to the section `.tsx` file
 2. Re-screenshot with Playwright
 3. Confirm the mismatch is resolved
-4. Mark the adjustment as done
+4. Mark the adjustment as `Fixed`
 
-Repeat until all sections pass visual QA on both **desktop** and **mobile** viewports.
+Repeat until all sections pass visual QA on both **desktop (1440px)** and **mobile (375px)** viewports.
 
 ---
 
-## Step 7: Performance Audit
+## Step 7: Performance & Accessibility Audit
 
-Run the performance skills on every section created. Reference the existing skills:
+Run the performance skills on every section created.
 
 ### 7.1 Image optimization
 
 Use skill: `.claude-performance/skills/image-optimizer/SKILL.md`
 
-For each section:
-- Verify images use proper formats (AVIF > WebP > JPEG)
-- Check lazy loading on below-fold images
-- Verify `width`/`height` attributes are set (CLS prevention)
-- Ensure hero/above-fold images are preloaded
+- [ ] Above-fold images are preloaded (`loading="eager"`)
+- [ ] Below-fold images are lazy loaded (`loading="lazy"`)
+- [ ] Images have explicit `width` and `height` (CLS prevention)
+- [ ] Images use optimized formats (prefer AVIF > WebP > JPEG)
+- [ ] No oversized images (max 2x display size)
 
 ### 7.2 HTML size optimization
 
 Use skill: `.claude-performance/skills/html-size-optimizer/SKILL.md`
 
-For each section:
-- Check for unnecessarily large HTML output
-- Verify no inline base64 images
-- Ensure Tailwind classes are not bloated
+- [ ] Section HTML is minimal (no unnecessary wrappers)
+- [ ] No inline base64 images
+- [ ] No unused Tailwind classes
 
 ### 7.3 Section-level performance
 
-For each created section, verify:
-
-- [ ] `LoadingFallback` is exported and has correct dimensions
+- [ ] `LoadingFallback` is exported and matches section dimensions
 - [ ] No blocking resources in the section
-- [ ] Lazy sections (below fold) use deferred loading via Deco's render
+- [ ] Below-fold sections use deferred loading via Deco's render
 - [ ] Server-side data fetching is cached appropriately
 - [ ] No N+1 loader calls (use `deduplicate-loaders` skill if needed)
+
+### 7.4 Accessibility
+
+- [ ] Heading hierarchy is correct (h1 > h2 > h3)
+- [ ] Images have alt text
+- [ ] Buttons have accessible labels
+- [ ] Color contrast meets WCAG AA (4.5:1 for normal text, 3:1 for large text and UI components)
+- [ ] Interactive elements are keyboard focusable
+- [ ] Skip navigation link (if applicable)
 
 ---
 
@@ -447,38 +591,93 @@ For each created section, verify:
 
 Use skill: `.claude-deco/skills/e2e-testing/SKILL.md`
 
-### 8.1 Structural checks
+### 8.1 Header / Navigation
 
-For each page, verify the sections render in the correct order and are functional:
+**Desktop:**
+- [ ] Logo renders and links to home
+- [ ] Navigation items render with correct text and links
+- [ ] Mega menu opens on hover (if applicable) with categories/subcategories
+- [ ] Search bar is visible and functional
+- [ ] Cart icon shows item count
+- [ ] User account icon/link works
+- [ ] Sticky header works on scroll (if designed)
 
-| Check | Desktop | Mobile |
-|-------|---------|--------|
-| Header renders with logo, nav, search, cart icon | Yes | Yes (hamburger menu) |
-| Navigation menu opens and links work | Click nav items | Tap hamburger > menu items |
-| Search opens, accepts input, shows results | Search bar | Search icon > overlay |
-| Footer renders with all links | Yes | Yes (stacked layout) |
-| Hero banner displays correct image and CTA | Yes | Yes (responsive image) |
-| Product shelf scrolls/pages | Arrows or scroll | Swipe or scroll |
+**Mobile:**
+- [ ] Logo renders
+- [ ] Hamburger menu icon is visible and opens drawer
+- [ ] Menu items are tappable (44x44px minimum)
+- [ ] Nested categories expand/collapse
+- [ ] Menu closes on navigation and backdrop tap
+- [ ] Search icon opens search overlay
+- [ ] Cart icon visible and functional
 
-### 8.2 E-commerce flow (if applicable)
+### 8.2 Hero Banner
 
-Run the full e-commerce E2E flow from the e2e-testing skill:
+- [ ] Background image loads
+- [ ] Title and subtitle render correctly
+- [ ] CTA button renders and links correctly
+- [ ] If carousel: arrows/dots work, autoplay works
+- [ ] Mobile: layout stacks or adjusts
+
+### 8.3 Product Shelf
+
+**Desktop:**
+- [ ] Correct number of products shown (e.g., 4 per row)
+- [ ] Product image, name, and price render
+- [ ] Navigation arrows work (if applicable)
+- [ ] Click navigates to PDP
+
+**Mobile:**
+- [ ] Products show in scroll/swipe layout with swipe gesture
+- [ ] Product cards properly sized with adequate touch targets
+
+### 8.4 Product Listing Page (PLP)
+
+- [ ] Products load and render in grid
+- [ ] Filters sidebar/dropdown works (mobile: opens as drawer/modal)
+- [ ] Sort dropdown works
+- [ ] Pagination or infinite scroll works
+- [ ] Product count and breadcrumb navigation displayed
+
+### 8.5 Product Detail Page (PDP)
+
+- [ ] Product images load (main + thumbnails) with gallery navigation
+- [ ] Product name, description, price render
+- [ ] Size/variant selector works
+- [ ] Add to cart and quantity selector work
+- [ ] Mobile: images swipeable, sticky add-to-cart bar (if designed)
+
+### 8.6 Search
+
+**Desktop:** Search input accepts text, suggestions appear, Enter navigates to results
+
+**Mobile:** Search icon opens overlay, keyboard opens automatically, suggestions appear, close button works
+
+### 8.7 Cart / Minicart
+
+- [ ] Minicart opens on add-to-cart
+- [ ] Product appears with quantity update and remove
+- [ ] Subtotal calculates correctly
+- [ ] Checkout button links correctly
+- [ ] Mobile: minicart is drawer/modal
+
+### 8.8 Footer
+
+- [ ] All link sections render with working links
+- [ ] Social media icons render and link
+- [ ] Newsletter signup works (if present)
+- [ ] Payment method icons render
+- [ ] Mobile: sections stack vertically
+
+### 8.9 E-commerce flow
+
+Run the full e-commerce E2E flow on **both desktop and mobile**:
 
 ```
 Home -> PLP -> PDP -> Add to Cart -> Minicart
 ```
 
-On **both desktop and mobile** viewports.
-
-### 8.3 Specific component checks
-
-- **Menu/MegaMenu**: Opens on hover (desktop) / tap (mobile), all categories render, links navigate correctly
-- **Search**: Opens, shows suggestions, results page loads with products
-- **Minicart**: Opens, shows added products, quantity updates, remove works
-- **Newsletter**: Form submits, validation works
-- **Carousel/Slider**: Navigation works, autoplay if designed, touch swipe on mobile
-
-### 8.4 Mobile-specific checks
+### 8.10 Mobile-specific checks
 
 - [ ] Touch targets are at least 44x44px
 - [ ] No horizontal scroll overflow
@@ -546,14 +745,6 @@ Before marking the implementation as complete, run through the review skill (`.c
 - [ ] E2E tests pass on desktop and mobile
 
 ---
-
-## Files in This Skill
-
-| File | Purpose |
-|------|---------|
-| `SKILL.md` | This complete workflow guide |
-| `discovery.md` | How to analyze a Figma file and map sections |
-| `qa-checklist.md` | Detailed visual QA and functional testing checklist |
 
 ## Related Skills
 
