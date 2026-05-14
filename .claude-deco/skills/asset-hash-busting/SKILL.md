@@ -1,94 +1,33 @@
 ---
 name: asset-hash-busting
-description: Use when auditing or fixing static asset cache busting in deco storefronts — especially when assets lack content hashes in the URL, when hash lookups always return null, or when `assets.gen.ts` was generated on Windows (keys contain backslashes or directory prefixes).
+description: Use when Icon or SVG sprite components fetch sprites.svg repeatedly causing excessive bandwidth, or when asset() is called inside a component render function for a constant URL.
 ---
 
-# Asset Hash Busting
+# SVG Sprites — prevent repeated fetch loop
 
-Deco storefronts use content-hashed URLs for static assets (`/sprites.svg?__deco_c=c296a2c7`) to enable immutable CDN caching. Two common failure patterns break this system silently.
+## Problem
 
----
+Calling `asset()` inside the component body recomputes the URL on every render. Since `<Icon>` is rendered once per icon on the page, each instance triggers a separate fetch to `sprites.svg` — causing the sprite file to be downloaded repeatedly in a loop instead of once.
 
-## Pattern 1 — `hash-assets.ts` generated on Windows
-
-### Symptom
-`assets.gen.ts` has keys with backslashes and directory prefixes:
-```ts
-"static-cv\\sprites.svg": "c296a2c7"  // ❌ Windows-generated
-```
-Instead of the expected Unix format:
-```ts
-"sprites.svg": "c296a2c7"             // ✅ correct
+```tsx
+// ❌ recomputed on every <Icon> render
+function Icon({ id }: Props) {
+  const spritesUrl = asset("/sprites.svg");
+  return <svg><use href={`${spritesUrl}#${id}`} /></svg>;
+}
 ```
 
-### Root cause
-`scripts/hash-assets.ts` strips the directory with:
-```ts
-const relativePath = entry.path.replace(`${staticDir}/`, "");
-```
-On Windows, `entry.path` uses `\`, so the replace finds nothing and the full path becomes the key.
+## Fix — hoist to module level
 
-### Fix — normalize paths in `hash-assets.ts`
-```ts
-const relativePath = entry.path
-  .replace(/\\/g, "/")                // normalize Windows separators first
-  .replace(`${staticDir}/`, "");
-```
-Then regenerate: `deno task hash-assets` (must run on macOS/Linux or after the fix above).
-
----
-
-## Pattern 2 — `asset()` called with query string in the path
-
-### Symptom
-```ts
-const spritesUrl = asset("/sprites.svg?v=2");  // ❌
-```
-The `?v=2` becomes part of the lookup key (`"sprites.svg?v=2"`), which never matches any hash entry. The URL is returned as-is and content-based cache busting doesn't work.
-
-### Fix
-```ts
-// ✅ no query string in the path — the hash function adds it
+```tsx
+// ✅ computed once, shared across all renders
 const spritesUrl = asset("/sprites.svg");
-```
 
----
-
-## Pattern 3 — `asset()` called inside a component render
-
-### Symptom
-```ts
 function Icon({ id }: Props) {
-  const spritesUrl = asset("/sprites.svg");  // ❌ recomputed on every render
-  ...
+  return <svg><use href={`${spritesUrl}#${id}`} /></svg>;
 }
 ```
 
-### Fix — hoist to module level
-```ts
-const spritesUrl = asset("/sprites.svg");   // ✅ computed once
+## General rule
 
-function Icon({ id }: Props) {
-  ...
-}
-```
-
----
-
-## Quick audit checklist
-
-1. Open `sdk/assets.gen.ts` — do keys look like `"sprites.svg"` or `"static-cv\\sprites.svg"`?
-   - If backslashes → fix `hash-assets.ts` and regenerate
-2. Grep for `asset(` calls — do any paths include `?` query params?
-   - If yes → remove the query string from the path
-3. Are constant `asset()` calls inside component functions?
-   - If yes → hoist to module level
-
-## Verification
-
-After fixing, confirm hashes are actually applied:
-```ts
-asset("/sprites.svg")
-// should return: "/sprites.svg?__deco_c=c296a2c7"
-// not: "/sprites.svg"
-```
+Any `asset()` call whose result does not depend on props belongs outside the component.
