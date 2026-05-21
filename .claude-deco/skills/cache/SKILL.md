@@ -55,9 +55,9 @@ Default TTL: **60 seconds** (override via `CACHE_MAX_AGE_S` env var or per-loade
 
 The final key is composed of: **resolver name** + **return value of `cacheKey`**.
 
-- **Never use the raw `req.url` or `url.href` as the key.** Real URLs carry tracking params (`utm_*`, `gclid`, `fbclid`, session tokens, etc.) that make every request look unique, effectively disabling the cache. Also avoid including the `origin` (hostname) — the same site may run under multiple origins (staging, custom domain, `*.deco.site`) and hostname variance causes unnecessary cache misses.
+- **Never use the raw `req.url` or `url.href` as the key.** Real URLs carry tracking params (`utm_*`, `gclid`, `fbclid`, session tokens, etc.) that make every request look unique, effectively disabling the cache.
 - **Build the key from props, not from the URL.** Use the loader `props` as the primary source of truth — they already represent the canonical inputs the framework parsed.
-- If you do use the URL, reconstruct it using only `pathname` and the specific params you need (see examples below).
+- If you do use the URL, reconstruct it with only the params you need (see examples below).
 - Include segmentation traits (locale, currency, segment token) when they affect the result.
 - Return `null` to disable caching for a specific invocation (e.g. logged-in user).
 
