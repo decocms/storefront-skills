@@ -1,6 +1,6 @@
 ---
 name: cache
-description: Audit and improve deco store caching across all three layers: loader cache, stale edge cache (async render), and HTML page cache. Use when the user asks to improve cache, reduce latency, optimize loaders, or configure TTL/cache keys on a deco storefront.
+description: Audit and improve deco store caching across all three layers: loader cache, stale edge cache (async render), and HTML page cache. Use when the user asks to improve cache, reduce latency, optimize loaders, configure TTL/cache keys, enable HTML cache, or debug cache-control headers on a deco storefront.
 ---
 
 # Deco Cache
@@ -42,15 +42,22 @@ export const cache = "stale-while-revalidate"; // never do this
 | `"stale-while-revalidate"` | Returns cached data, revalidates in background (default TTL: 60s) | **Best default** for public, read-mostly loaders |
 | `{ maxAge: number }` | Same SWR behavior but with a longer TTL in seconds — use this when you want to enforce more cache time | Public data that is stable for longer periods (e.g. `maxAge: 60 * 60` for 1 hour) |
 
+To set a custom TTL together with SWR mode, export `maxAge` as a separate number alongside `cache = "stale-while-revalidate"`:
+
+```ts
+export const cache = "stale-while-revalidate";
+export const maxAge = 300; // 5 minutes
+```
+
 Default TTL: **60 seconds** (override via `CACHE_MAX_AGE_S` env var or per-loader `maxAge`).
 
 ### Cache key rules
 
 The final key is composed of: **resolver name** + **return value of `cacheKey`**.
 
-- **Never use the raw `req.url` or `url.href` as the key.** Real URLs carry tracking params (`utm_*`, `gclid`, `fbclid`, session tokens, etc.) that make every request look unique, effectively disabling the cache.
+- **Never use the raw `req.url` or `url.href` as the key.** Real URLs carry tracking params (`utm_*`, `gclid`, `fbclid`, session tokens, etc.) that make every request look unique, effectively disabling the cache. Also avoid including the `origin` (hostname) — the same site may run under multiple origins (staging, custom domain, `*.deco.site`) and hostname variance causes unnecessary cache misses.
 - **Build the key from props, not from the URL.** Use the loader `props` as the primary source of truth — they already represent the canonical inputs the framework parsed.
-- If you do use the URL, reconstruct it with only the params you need (see examples below).
+- If you do use the URL, reconstruct it using only `pathname` and the specific params you need (see examples below).
 - Include segmentation traits (locale, currency, segment token) when they affect the result.
 - Return `null` to disable caching for a specific invocation (e.g. logged-in user).
 
@@ -122,34 +129,109 @@ A section is cached at the CDN **only if all of its loaders are configured for c
 
 Caches the fully assembled page HTML at the CDN edge. A cache hit means zero server involvement.
 
-> Currently enabled on select sites only. Contact the deco team to enable.
+### How it works
 
-### Eligibility (cached)
+The deco runtime middleware (`runtime/middleware.ts`) sets a `Cache-Control` header on HTML responses. The CDN (Cloudflare, Azion) caches the page when it sees a cacheable `Cache-Control`.
+
+#### Cache-Control decision tree
+
+```
+Request arrives
+│
+├─ Set-Cookie header present?
+│   └─ YES → Cache-Control: no-store, no-cache, must-revalidate  (never cached)
+│
+└─ NO → HTML response? + DECO_PAGE_CACHE_ENABLED=true + page not dirty?
+    ├─ Any A/B flag not cacheable?
+    │   └─ YES → Cache-Control: no-store, no-cache, must-revalidate
+    │
+    └─ NO → Cache-Control header already set?
+        ├─ YES → keep it (app set its own value)
+        └─ NO  → Cache-Control: <DECO_PAGE_CACHE_CONTROL>
+                 (default: "public, max-age=90, s-maxage=90, stale-while-revalidate=30")
+```
+
+#### "Page dirty"
+
+App middlewares (VTEX, WAKE) mark a page as **dirty** when per-user state is present (auth cookies, personalized content). Dirty pages are never cached.
+
+For VTEX sites, the middleware marks pages dirty when it detects `VtexIdclientAutCookie`. Logged-in users always receive uncached responses.
+
+### Eligibility
+
+**Cached:**
 - Anonymous visitors with no active session
 - Standard page navigation requests
 - Pages with no dynamic per-user state
 
-### Always bypassed (served fresh)
+**Always bypassed (served fresh):**
 - Logged-in users
 - Responses that set cookies
 - Pages with active non-cacheable A/B flags
 - VTEX: users with active campaigns, price tables, or region-specific pricing
 
-### Default Cache-Control
-```
-public, max-age=90, s-maxage=90, stale-while-revalidate=30
-```
-If the application sets its own `Cache-Control`, the platform default is ignored.
+### Step 1 — Set env vars (Kubernetes)
 
-### Verify
+Set in the site's Kubernetes `state` secret (namespace `sites-<sitename>`):
+
+| Env var | Required | Value |
+|---------|----------|-------|
+| `DECO_PAGE_CACHE_ENABLED` | Yes | `true` |
+| `DECO_PAGE_CACHE_CONTROL` | No | Custom `Cache-Control`. Default: `public, max-age=90, s-maxage=90, stale-while-revalidate=30` |
+
+### Step 2 — Add site to Cloudflare Page Cache rule
+
+Two existing rules in Cloudflare handle HTML caching. Add the site's hostname to the appropriate one — no new rules need to be created:
+
+| Rule | When to use |
+|------|-------------|
+| **Page Cache** | Standard — excludes logged-in users via `VtexIdclientAutCookie` cookie filter |
+| **Page Cache - With UTM** | Same, but also caches pages with UTM query params in the URL |
+
+Edit the rule and add a `Hostname equals www.site.com.br` condition to the existing list. The expression pattern:
+
+```
+(
+  (http.host eq "www.site.com.br") or
+  (http.host eq "www.other-site.com.br") or
+  ...
+) and not (http.cookie contains "VtexIdclientAutCookie")
+```
+
+> `contains "VtexIdclientAutCookie"` without `=` matches all VTEX auth cookie variants (`VtexIdclientAutCookie_accountname`, `VtexIdclientAutCookie_uuid`, etc.).
+
+Both rules use:
+- **Cache eligibility:** Eligible for cache
+- **Browser TTL:** Use cache-control header if present, bypass cache if not
+
+### Step 3 — Verify
+
 ```bash
-curl -sI https://www.yoursite.com/ | grep -i cache-control
-```
-- Cacheable: `public, max-age=90, s-maxage=90, stale-while-revalidate=30`
-- Not cacheable: `no-store, no-cache, must-revalidate`
+# Anonymous user — expect cacheable header
+curl -sI https://www.site.com.br/ | grep -i cache-control
+# → cache-control: public, max-age=90, s-maxage=90, stale-while-revalidate=30
 
-### Invalidation
-No manual purge. Pages expire naturally after TTL.
+# Logged-in user — expect no-cache
+curl -sI https://www.site.com.br/ \
+  -H "Cookie: VtexIdclientAutCookie=somevalue" \
+  | grep -i cache-control
+# → cache-control: no-store, no-cache, must-revalidate
+```
+
+### Common issues
+
+| Symptom | Likely cause |
+|---------|-------------|
+| `Cache-Control: no-store` even with env var set | `Set-Cookie` in response, or page is dirty (auth cookie present) |
+| Cloudflare still serving MISS | Rule not added or cookie filter blocking the request |
+
+### ⚠️ VTEX — do NOT use a site-level `_middleware.ts` to strip cookies
+
+As of `apps/vtex@0.47+`, the VTEX app already guarantees that anonymous requests on the default sales channel emit **no `Set-Cookie` headers** — so deco's runtime middleware sets the correct cacheable `Cache-Control` automatically. The VTEX middleware also correctly marks responses dirty (sets `no-store`) for logged-in users, non-default sales channels, and active campaigns.
+
+Adding a `routes/_middleware.ts` that strips VTEX cookies and overrides `no-store` is **dangerous**: when the VTEX app intentionally marks a response non-cacheable (e.g. user with a non-default price table), the site middleware will re-enable caching for that response, serving wrong prices or promotions to other users.
+
+If a site already has such a middleware, **remove it** and rely on the env vars + Cloudflare rule instead.
 
 ---
 
@@ -179,10 +261,11 @@ When auditing or improving a store's cache:
    - User-specific / session → `"no-store"` (no `cacheKey` needed)
 4. **Write `cacheKey` from props, not from the URL.** The URL contains tracking params and query strings that vary per visitor and destroy cache hit rates. Build the key by composing only the props fields that affect the result. Return `null` for authenticated contexts.
 5. **Verify CDN cacheability** — after configuring loaders, check that sections whose loaders are all cached are actually being served from the edge.
-6. **Check HTML page cache eligibility** — inspect `Cache-Control` headers on anonymous requests.
+6. **Check HTML page cache eligibility** — inspect `Cache-Control` headers on anonymous requests. If missing or `no-store`, check: is `DECO_PAGE_CACHE_ENABLED=true`? Is the site in the Cloudflare rule?
 
 ### Priority order
 1. Add `cache` + `cacheKey` to every public **async** loader missing them.
 2. Fix loaders using `"no-store"` unnecessarily (blocking section CDN caching).
 3. Audit existing `cacheKey` implementations — replace any that use `req.url` or `url.href` directly with prop-based keys.
 4. Tune TTLs: shorter for volatile data, longer (5–30 min) for stable catalog data.
+5. Enable HTML page cache via `DECO_PAGE_CACHE_ENABLED=true` + Cloudflare rule.
