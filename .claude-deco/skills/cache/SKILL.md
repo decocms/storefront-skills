@@ -138,41 +138,18 @@ Caches the fully assembled page HTML at the CDN edge. A cache hit means zero ser
 
 ### How it works
 
-The VTEX app middleware sets a bag key (`PAGE_CACHE_ALLOWED_KEY`) when the page is safe to cache. The deco runtime reads this key and emits a public `Cache-Control` header. The Cloudflare rule is already configured globally — no per-site CDN changes needed.
+When the site is on the required versions, the deco runtime automatically emits `Cache-Control: public` on cacheable HTML responses. The CDN (Cloudflare) is already configured globally to cache responses that carry this header — no per-site CDN changes are needed.
 
-#### Cache-Control decision tree
-
+Default Cache-Control for cached pages:
 ```
-Request arrives
-│
-├─ Set-Cookie header present?
-│   └─ YES → Cache-Control: no-store, no-cache, must-revalidate  (never cached)
-│
-└─ NO → HTML response? + PAGE_CACHE_ALLOWED_KEY set in bag?
-    ├─ NO  → no Cache-Control set (CDN won't cache)
-    │
-    └─ YES → Any A/B flag not cacheable?
-        ├─ YES → Cache-Control: no-store, no-cache, must-revalidate
-        │
-        └─ NO → Cache-Control header already set?
-            ├─ YES → keep it (app set its own value)
-            └─ NO  → Cache-Control: <DECO_PAGE_CACHE_CONTROL>
-                     (default: "public, max-age=90, s-maxage=90, stale-while-revalidate=3600, stale-if-error=86400")
+public, max-age=90, s-maxage=90, stale-while-revalidate=3600, stale-if-error=86400
 ```
 
-#### When does VTEX allow caching?
-
-The VTEX middleware sets `PAGE_CACHE_ALLOWED_KEY` only when **all** of the following are true:
-
-- User is **not** logged in (no `VtexIdclientAutCookie`)
-- Segment has **no** active campaigns, price tables, or regionId
-- Channel privacy is **not** `private`
-
-Any other case sets `Cache-Control: no-store` directly.
+Anonymous requests from logged-out users with no active promotions or price tables are cached. Everything else (logged-in users, personalized segments) receives `no-store`.
 
 ### How to enable
 
-**Step 1 — Update deps** in `deno.json`:
+Update deps in `deno.json`:
 
 ```json
 {
@@ -183,14 +160,9 @@ Any other case sets `Cache-Control: no-store` directly.
 }
 ```
 
-That's it. No CDN configuration needed.
+No CDN configuration, no env vars needed. `DECO_PAGE_CACHE_CONTROL` is still supported to override the default Cache-Control value if needed.
 
-It's safe as a broad rule because caching is opt-in at the runtime level: Cloudflare only caches when the origin emits `Cache-Control: public`, which only happens when `PAGE_CACHE_ALLOWED_KEY` is set.
-
-> `DECO_PAGE_CACHE_ENABLED` is **no longer used** — remove it from env vars if present.
-> `DECO_PAGE_CACHE_CONTROL` is still supported to override the default Cache-Control value.
-
-**Step 2 — Verify**:
+### Verify
 
 ```bash
 # Anonymous user — expect cacheable header
@@ -208,17 +180,12 @@ curl -sI https://www.site.com.br/ \
 
 | Symptom | Likely cause |
 |---------|-------------|
-| `Cache-Control: no-store` on anonymous requests | Active segment (campaigns/priceTables/regionId) or `Set-Cookie` in response |
-| No `Cache-Control` header at all | `apps` version below `0.153.0` — runtime never receives the opt-in signal |
+| No `Cache-Control: public` on anonymous requests | `apps` below `0.153.0`, or active segment (campaigns/priceTables/regionId) |
 | Cloudflare still serving MISS | Response missing `Cache-Control: public` |
 
-### ⚠️ VTEX — do NOT use a site-level `_middleware.ts` to strip cookies
+### ⚠️ Do NOT use a site-level `_middleware.ts` to strip cookies
 
-The VTEX app already guarantees that anonymous/default-channel responses emit no `Set-Cookie` headers and sets `PAGE_CACHE_ALLOWED_KEY` when caching is safe. It also sets `no-store` for logged-in users, non-default sales channels, and active campaigns.
-
-Adding a `routes/_middleware.ts` that strips VTEX cookies and overrides `no-store` is **dangerous**: it can re-enable caching for responses intentionally marked non-cacheable (e.g. user with a non-default price table), serving wrong prices or promotions to other users.
-
-If a site already has such a middleware, **remove it**.
+Adding a `routes/_middleware.ts` that strips cookies and overrides `no-store` is **dangerous**: it can re-enable caching for responses intentionally marked non-cacheable (e.g. users with non-default price tables), serving wrong prices or promotions to other users. If a site already has such a middleware, **remove it**.
 
 ---
 
@@ -248,11 +215,11 @@ When auditing or improving a store's cache:
    - User-specific / session → `"no-store"` (no `cacheKey` needed)
 4. **Write `cacheKey` from props, not from the URL.** The URL contains tracking params and query strings that vary per visitor and destroy cache hit rates. Build the key by composing only the props fields that affect the result. Return `null` for authenticated contexts.
 5. **Verify CDN cacheability** — after configuring loaders, check that sections whose loaders are all cached are actually being served from the edge.
-6. **Check HTML page cache eligibility** — inspect `Cache-Control` headers on anonymous requests. If missing or `no-store`, check: is `DECO_PAGE_CACHE_ENABLED=true`? Is the site in the Cloudflare rule?
+6. **Check HTML page cache eligibility** — read `deno.json` and confirm `deco` ≥ `1.199.0` and `apps` ≥ `0.153.0`. If not, update deps. Then verify with `curl -sI https://www.site.com.br/ | grep -i cache-control`.
 
 ### Priority order
 1. Add `cache` + `cacheKey` to every public **async** loader missing them.
 2. Fix loaders using `"no-store"` unnecessarily (blocking section CDN caching).
 3. Audit existing `cacheKey` implementations — replace any that use `req.url` or `url.href` directly with prop-based keys.
 4. Tune TTLs: shorter for volatile data, longer (5–30 min) for stable catalog data.
-5. Enable HTML page cache by updating to `deco@1.199.0` + `apps@0.153.0` — no CDN config needed.
+5. Enable HTML page cache: check `deno.json` for `deco@1.199.0` + `apps@0.153.0` and update if needed.
