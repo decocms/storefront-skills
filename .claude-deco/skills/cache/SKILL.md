@@ -175,7 +175,7 @@ curl -sI https://www.site.com.br/ \
 
 | Symptom | Likely cause |
 |---------|-------------|
-| No `Cache-Control: public` on anonymous requests | `apps` below `0.153.0`, or active segment (campaigns/priceTables/regionId) |
+| No `Cache-Control: public` on anonymous requests | `apps` below `0.153.0`; active segment (campaigns/priceTables/regionId); or `Set-Cookie` present in the response (any loader or middleware setting a cookie forces the runtime to skip caching) |
 | Cloudflare still serving MISS | Response missing `Cache-Control: public` |
 
 ### ⚠️ Do NOT use a site-level `_middleware.ts` to strip cookies
