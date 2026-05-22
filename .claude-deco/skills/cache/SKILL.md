@@ -75,8 +75,8 @@ export const cache = "stale-while-revalidate";
 export const cacheKey = (props: { category: string; page: number }) =>
   `${props.category}:${props.page}`;
 
-// Enforce longer cache time (5 minutes) using { maxAge } — SWR mode is implicit
-export const cache = { maxAge: 300 };
+// Enforce longer cache time (1 hour) — SWR mode is implicit
+export const cache = { maxAge: 60 * 60 };
 export const cacheKey = (props: { category: string }) => props.category;
 
 // If you must use the URL, reconstruct it with only known-safe params
