@@ -183,10 +183,7 @@ Any other case sets `Cache-Control: no-store` directly.
 }
 ```
 
-That's it. No CDN configuration needed — the Cloudflare rule already covers all sites:
-```
-not (http.cookie contains "VtexIdclientAutCookie")
-```
+That's it. No CDN configuration needed.
 
 It's safe as a broad rule because caching is opt-in at the runtime level: Cloudflare only caches when the origin emits `Cache-Control: public`, which only happens when `PAGE_CACHE_ALLOWED_KEY` is set.
 
