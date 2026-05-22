@@ -1,6 +1,6 @@
 ---
 name: cache
-description: Audit and improve deco store caching across all three layers: loader cache, stale edge cache (async render), and HTML page cache. Use when the user asks to improve cache, reduce latency, optimize loaders, or configure TTL/cache keys on a deco storefront.
+description: "Audit and improve deco store caching across all three layers: loader cache, stale edge cache (async render), and HTML page cache. Use when the user asks to improve cache, reduce latency, optimize loaders, configure TTL/cache keys, enable HTML cache, or debug cache-control headers on a deco storefront."
 ---
 
 # Deco Cache
@@ -40,9 +40,11 @@ export const cache = "stale-while-revalidate"; // never do this
 | `"no-store"` *(default)* | Disables cache; also prevents CDN section caching | Carts, sessions, user-specific data |
 | `"no-cache"` | Always fetches fresh, but section can still be CDN-cached | Loader must be fresh but section is safe to cache |
 | `"stale-while-revalidate"` | Returns cached data, revalidates in background (default TTL: 60s) | **Best default** for public, read-mostly loaders |
-| `{ maxAge: number }` | Same SWR behavior but with a longer TTL in seconds — use this when you want to enforce more cache time | Public data that is stable for longer periods (e.g. `maxAge: 60 * 60` for 1 hour) |
+| `{ maxAge: number }` | SWR behavior with a custom TTL in seconds | Public data that is stable for longer periods (e.g. `{ maxAge: 60 * 60 }` for 1 hour) |
 
-Default TTL: **60 seconds** (override via `CACHE_MAX_AGE_S` env var or per-loader `maxAge`).
+Default TTL: **60 seconds** (override via `CACHE_MAX_AGE_S` env var or per-loader `{ maxAge }`).
+
+> **Note:** `export const maxAge = N` as a separate export is **not** a supported API and will be silently ignored. Always use `export const cache = { maxAge: N }` to set a custom TTL.
 
 ### Cache key rules
 
@@ -73,7 +75,7 @@ export const cache = "stale-while-revalidate";
 export const cacheKey = (props: { category: string; page: number }) =>
   `${props.category}:${props.page}`;
 
-// Enforce longer cache time (1 hour) — still uses SWR, just with a bigger maxAge
+// Enforce longer cache time (1 hour) — SWR mode is implicit
 export const cache = { maxAge: 60 * 60 };
 export const cacheKey = (props: { category: string }) => props.category;
 
@@ -122,34 +124,63 @@ A section is cached at the CDN **only if all of its loaders are configured for c
 
 Caches the fully assembled page HTML at the CDN edge. A cache hit means zero server involvement.
 
-> Currently enabled on select sites only. Contact the deco team to enable.
+### Minimum versions required
 
-### Eligibility (cached)
-- Anonymous visitors with no active session
-- Standard page navigation requests
-- Pages with no dynamic per-user state
+| Package | Minimum version |
+|---------|----------------|
+| `deco` | `1.199.0` |
+| `apps` (VTEX sites) | `0.153.0` |
 
-### Always bypassed (served fresh)
-- Logged-in users
-- Responses that set cookies
-- Pages with active non-cacheable A/B flags
-- VTEX: users with active campaigns, price tables, or region-specific pricing
+### How it works
 
-### Default Cache-Control
+**This layer is available for VTEX sites only.** When the site is on the required versions, the deco runtime automatically emits `Cache-Control: public` on cacheable HTML responses. The CDN (Cloudflare) is already configured globally to cache responses that carry this header — no per-site CDN changes are needed.
+
+Default Cache-Control for cached pages:
 ```
-public, max-age=90, s-maxage=90, stale-while-revalidate=30
+public, max-age=90, s-maxage=90, stale-while-revalidate=3600, stale-if-error=86400
 ```
-If the application sets its own `Cache-Control`, the platform default is ignored.
+
+Anonymous requests from logged-out users with no active promotions or price tables are cached. Everything else (logged-in users, personalized segments) receives `no-store`.
+
+### How to enable
+
+Update deps in `deno.json`:
+
+```json
+{
+  "imports": {
+    "deco/": "https://denopkg.com/deco-cx/deco@1.199.0/",
+    "apps/": "https://denopkg.com/deco-cx/apps@0.153.0/"
+  }
+}
+```
+
+No CDN configuration, no env vars needed. `DECO_PAGE_CACHE_CONTROL` is still supported to override the default Cache-Control value if needed.
 
 ### Verify
-```bash
-curl -sI https://www.yoursite.com/ | grep -i cache-control
-```
-- Cacheable: `public, max-age=90, s-maxage=90, stale-while-revalidate=30`
-- Not cacheable: `no-store, no-cache, must-revalidate`
 
-### Invalidation
-No manual purge. Pages expire naturally after TTL.
+```bash
+# Anonymous user — expect cacheable header
+curl -sI https://www.site.com.br/ | grep -i cache-control
+# → cache-control: public, max-age=90, s-maxage=90, stale-while-revalidate=3600, stale-if-error=86400
+
+# Logged-in user — expect no-cache
+curl -sI https://www.site.com.br/ \
+  -H "Cookie: VtexIdclientAutCookie=somevalue" \
+  | grep -i cache-control
+# → cache-control: no-store, no-cache, must-revalidate
+```
+
+### Common issues
+
+| Symptom | Likely cause |
+|---------|-------------|
+| No `Cache-Control: public` on anonymous requests | `apps` below `0.153.0`; active segment (campaigns/priceTables/regionId); or `Set-Cookie` present in the response (any loader or middleware setting a cookie forces the runtime to skip caching) |
+| Cloudflare still serving MISS | Response missing `Cache-Control: public` |
+
+### ⚠️ Do NOT use a site-level `_middleware.ts` to strip cookies
+
+Adding a `routes/_middleware.ts` that strips cookies and overrides `no-store` is **dangerous**: it can re-enable caching for responses intentionally marked non-cacheable (e.g. users with non-default price tables), serving wrong prices or promotions to other users. If a site already has such a middleware, **remove it**.
 
 ---
 
@@ -179,10 +210,11 @@ When auditing or improving a store's cache:
    - User-specific / session → `"no-store"` (no `cacheKey` needed)
 4. **Write `cacheKey` from props, not from the URL.** The URL contains tracking params and query strings that vary per visitor and destroy cache hit rates. Build the key by composing only the props fields that affect the result. Return `null` for authenticated contexts.
 5. **Verify CDN cacheability** — after configuring loaders, check that sections whose loaders are all cached are actually being served from the edge.
-6. **Check HTML page cache eligibility** — inspect `Cache-Control` headers on anonymous requests.
+6. **Check HTML page cache eligibility** — read `deno.json` and confirm `deco` ≥ `1.199.0` and `apps` ≥ `0.153.0`. If not, update deps. Then verify with `curl -sI https://www.site.com.br/ | grep -i cache-control`.
 
 ### Priority order
 1. Add `cache` + `cacheKey` to every public **async** loader missing them.
 2. Fix loaders using `"no-store"` unnecessarily (blocking section CDN caching).
 3. Audit existing `cacheKey` implementations — replace any that use `req.url` or `url.href` directly with prop-based keys.
 4. Tune TTLs: shorter for volatile data, longer (5–30 min) for stable catalog data.
+5. Enable HTML page cache: check `deno.json` for `deco@1.199.0` + `apps@0.153.0` and update if needed.
