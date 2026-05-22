@@ -129,9 +129,16 @@ A section is cached at the CDN **only if all of its loaders are configured for c
 
 Caches the fully assembled page HTML at the CDN edge. A cache hit means zero server involvement.
 
+### Minimum versions required
+
+| Package | Minimum version |
+|---------|----------------|
+| `deco` | `1.199.0` |
+| `apps` (VTEX sites) | `0.153.0` |
+
 ### How it works
 
-The deco runtime middleware (`runtime/middleware.ts`) sets a `Cache-Control` header on HTML responses. The CDN (Cloudflare, Azion) caches the page when it sees a cacheable `Cache-Control`.
+The VTEX app middleware sets a bag key (`PAGE_CACHE_ALLOWED_KEY`) when the page is safe to cache. The deco runtime reads this key and emits a public `Cache-Control` header. The Cloudflare rule is already configured globally — no per-site CDN changes needed.
 
 #### Cache-Control decision tree
 
@@ -141,75 +148,57 @@ Request arrives
 ├─ Set-Cookie header present?
 │   └─ YES → Cache-Control: no-store, no-cache, must-revalidate  (never cached)
 │
-└─ NO → HTML response? + DECO_PAGE_CACHE_ENABLED=true + page not dirty?
-    ├─ Any A/B flag not cacheable?
-    │   └─ YES → Cache-Control: no-store, no-cache, must-revalidate
+└─ NO → HTML response? + PAGE_CACHE_ALLOWED_KEY set in bag?
+    ├─ NO  → no Cache-Control set (CDN won't cache)
     │
-    └─ NO → Cache-Control header already set?
-        ├─ YES → keep it (app set its own value)
-        └─ NO  → Cache-Control: <DECO_PAGE_CACHE_CONTROL>
-                 (default: "public, max-age=90, s-maxage=90, stale-while-revalidate=30")
+    └─ YES → Any A/B flag not cacheable?
+        ├─ YES → Cache-Control: no-store, no-cache, must-revalidate
+        │
+        └─ NO → Cache-Control header already set?
+            ├─ YES → keep it (app set its own value)
+            └─ NO  → Cache-Control: <DECO_PAGE_CACHE_CONTROL>
+                     (default: "public, max-age=90, s-maxage=90, stale-while-revalidate=3600, stale-if-error=86400")
 ```
 
-#### "Page dirty"
+#### When does VTEX allow caching?
 
-App middlewares (VTEX, WAKE) mark a page as **dirty** when per-user state is present (auth cookies, personalized content). Dirty pages are never cached.
+The VTEX middleware sets `PAGE_CACHE_ALLOWED_KEY` only when **all** of the following are true:
 
-For VTEX sites, the middleware marks pages dirty when it detects `VtexIdclientAutCookie`. Logged-in users always receive uncached responses.
+- User is **not** logged in (no `VtexIdclientAutCookie`)
+- Segment has **no** active campaigns, price tables, or regionId
+- Channel privacy is **not** `private`
 
-### Eligibility
+Any other case sets `Cache-Control: no-store` directly.
 
-**Cached:**
-- Anonymous visitors with no active session
-- Standard page navigation requests
-- Pages with no dynamic per-user state
+### How to enable
 
-**Always bypassed (served fresh):**
-- Logged-in users
-- Responses that set cookies
-- Pages with active non-cacheable A/B flags
-- VTEX: users with active campaigns, price tables, or region-specific pricing
+**Step 1 — Update deps** in `deno.json`:
 
-### Step 1 — Set env vars (Kubernetes)
-
-Set in the site's Kubernetes `state` secret (namespace `sites-<sitename>`):
-
-| Env var | Required | Value |
-|---------|----------|-------|
-| `DECO_PAGE_CACHE_ENABLED` | Yes | `true` |
-| `DECO_PAGE_CACHE_CONTROL` | No | Custom `Cache-Control`. Default: `public, max-age=90, s-maxage=90, stale-while-revalidate=30` |
-
-### Step 2 — Add site to Cloudflare Page Cache rule
-
-Two existing rules in Cloudflare handle HTML caching. Add the site's hostname to the appropriate one — no new rules need to be created:
-
-| Rule | When to use |
-|------|-------------|
-| **Page Cache** | Standard — excludes logged-in users via `VtexIdclientAutCookie` cookie filter |
-| **Page Cache - With UTM** | Same, but also caches pages with UTM query params in the URL |
-
-Edit the rule and add a `Hostname equals www.site.com.br` condition to the existing list. The expression pattern:
-
-```
-(
-  (http.host eq "www.site.com.br") or
-  (http.host eq "www.other-site.com.br") or
-  ...
-) and not (http.cookie contains "VtexIdclientAutCookie")
+```json
+{
+  "imports": {
+    "deco/": "https://denopkg.com/deco-cx/deco@1.199.0/",
+    "apps/": "https://denopkg.com/deco-cx/apps@0.153.0/"
+  }
+}
 ```
 
-> `contains "VtexIdclientAutCookie"` without `=` matches all VTEX auth cookie variants (`VtexIdclientAutCookie_accountname`, `VtexIdclientAutCookie_uuid`, etc.).
+That's it. No CDN configuration needed — the Cloudflare rule already covers all sites:
+```
+not (http.cookie contains "VtexIdclientAutCookie")
+```
 
-Both rules use:
-- **Cache eligibility:** Eligible for cache
-- **Browser TTL:** Use cache-control header if present, bypass cache if not
+It's safe as a broad rule because caching is opt-in at the runtime level: Cloudflare only caches when the origin emits `Cache-Control: public`, which only happens when `PAGE_CACHE_ALLOWED_KEY` is set.
 
-### Step 3 — Verify
+> `DECO_PAGE_CACHE_ENABLED` is **no longer used** — remove it from env vars if present.
+> `DECO_PAGE_CACHE_CONTROL` is still supported to override the default Cache-Control value.
+
+**Step 2 — Verify**:
 
 ```bash
 # Anonymous user — expect cacheable header
 curl -sI https://www.site.com.br/ | grep -i cache-control
-# → cache-control: public, max-age=90, s-maxage=90, stale-while-revalidate=30
+# → cache-control: public, max-age=90, s-maxage=90, stale-while-revalidate=3600, stale-if-error=86400
 
 # Logged-in user — expect no-cache
 curl -sI https://www.site.com.br/ \
@@ -222,16 +211,17 @@ curl -sI https://www.site.com.br/ \
 
 | Symptom | Likely cause |
 |---------|-------------|
-| `Cache-Control: no-store` even with env var set | `Set-Cookie` in response, or page is dirty (auth cookie present) |
-| Cloudflare still serving MISS | Rule not added or cookie filter blocking the request |
+| `Cache-Control: no-store` on anonymous requests | Active segment (campaigns/priceTables/regionId) or `Set-Cookie` in response |
+| No `Cache-Control` header at all | `apps` version below `0.153.0` — runtime never receives the opt-in signal |
+| Cloudflare still serving MISS | Response missing `Cache-Control: public` |
 
 ### ⚠️ VTEX — do NOT use a site-level `_middleware.ts` to strip cookies
 
-As of `apps/vtex@0.47+`, the VTEX app already guarantees that anonymous requests on the default sales channel emit **no `Set-Cookie` headers** — so deco's runtime middleware sets the correct cacheable `Cache-Control` automatically. The VTEX middleware also correctly marks responses dirty (sets `no-store`) for logged-in users, non-default sales channels, and active campaigns.
+The VTEX app already guarantees that anonymous/default-channel responses emit no `Set-Cookie` headers and sets `PAGE_CACHE_ALLOWED_KEY` when caching is safe. It also sets `no-store` for logged-in users, non-default sales channels, and active campaigns.
 
-Adding a `routes/_middleware.ts` that strips VTEX cookies and overrides `no-store` is **dangerous**: when the VTEX app intentionally marks a response non-cacheable (e.g. user with a non-default price table), the site middleware will re-enable caching for that response, serving wrong prices or promotions to other users.
+Adding a `routes/_middleware.ts` that strips VTEX cookies and overrides `no-store` is **dangerous**: it can re-enable caching for responses intentionally marked non-cacheable (e.g. user with a non-default price table), serving wrong prices or promotions to other users.
 
-If a site already has such a middleware, **remove it** and rely on the env vars + Cloudflare rule instead.
+If a site already has such a middleware, **remove it**.
 
 ---
 
@@ -268,4 +258,4 @@ When auditing or improving a store's cache:
 2. Fix loaders using `"no-store"` unnecessarily (blocking section CDN caching).
 3. Audit existing `cacheKey` implementations — replace any that use `req.url` or `url.href` directly with prop-based keys.
 4. Tune TTLs: shorter for volatile data, longer (5–30 min) for stable catalog data.
-5. Enable HTML page cache via `DECO_PAGE_CACHE_ENABLED=true` + Cloudflare rule.
+5. Enable HTML page cache by updating to `deco@1.199.0` + `apps@0.153.0` — no CDN config needed.
