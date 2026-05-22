@@ -40,16 +40,11 @@ export const cache = "stale-while-revalidate"; // never do this
 | `"no-store"` *(default)* | Disables cache; also prevents CDN section caching | Carts, sessions, user-specific data |
 | `"no-cache"` | Always fetches fresh, but section can still be CDN-cached | Loader must be fresh but section is safe to cache |
 | `"stale-while-revalidate"` | Returns cached data, revalidates in background (default TTL: 60s) | **Best default** for public, read-mostly loaders |
-| `{ maxAge: number }` | Same SWR behavior but with a longer TTL in seconds — use this when you want to enforce more cache time | Public data that is stable for longer periods (e.g. `maxAge: 60 * 60` for 1 hour) |
+| `{ maxAge: number }` | SWR behavior with a custom TTL in seconds | Public data that is stable for longer periods (e.g. `{ maxAge: 60 * 60 }` for 1 hour) |
 
-To set a custom TTL together with SWR mode, export `maxAge` as a separate number alongside `cache = "stale-while-revalidate"`:
+Default TTL: **60 seconds** (override via `CACHE_MAX_AGE_S` env var or per-loader `{ maxAge }`).
 
-```ts
-export const cache = "stale-while-revalidate";
-export const maxAge = 300; // 5 minutes
-```
-
-Default TTL: **60 seconds** (override via `CACHE_MAX_AGE_S` env var or per-loader `maxAge`).
+> **Note:** `export const maxAge = N` as a separate export is **not** a supported API and will be silently ignored. Always use `export const cache = { maxAge: N }` to set a custom TTL.
 
 ### Cache key rules
 
@@ -80,8 +75,8 @@ export const cache = "stale-while-revalidate";
 export const cacheKey = (props: { category: string; page: number }) =>
   `${props.category}:${props.page}`;
 
-// Enforce longer cache time (1 hour) — still uses SWR, just with a bigger maxAge
-export const cache = { maxAge: 60 * 60 };
+// Enforce longer cache time (5 minutes) using { maxAge } — SWR mode is implicit
+export const cache = { maxAge: 300 };
 export const cacheKey = (props: { category: string }) => props.category;
 
 // If you must use the URL, reconstruct it with only known-safe params
