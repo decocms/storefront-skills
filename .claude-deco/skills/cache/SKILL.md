@@ -133,7 +133,7 @@ Caches the fully assembled page HTML at the CDN edge. A cache hit means zero ser
 
 ### How it works
 
-When the site is on the required versions, the deco runtime automatically emits `Cache-Control: public` on cacheable HTML responses. The CDN (Cloudflare) is already configured globally to cache responses that carry this header — no per-site CDN changes are needed.
+**This layer is available for VTEX sites only.** When the site is on the required versions, the deco runtime automatically emits `Cache-Control: public` on cacheable HTML responses. The CDN (Cloudflare) is already configured globally to cache responses that carry this header — no per-site CDN changes are needed.
 
 Default Cache-Control for cached pages:
 ```
