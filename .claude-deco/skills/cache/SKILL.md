@@ -1,6 +1,6 @@
 ---
 name: cache
-description: Audit and improve deco store caching across all three layers: loader cache, stale edge cache (async render), and HTML page cache. Use when the user asks to improve cache, reduce latency, optimize loaders, configure TTL/cache keys, enable HTML cache, or debug cache-control headers on a deco storefront.
+description: "Audit and improve deco store caching across all three layers: loader cache, stale edge cache (async render), and HTML page cache. Use when the user asks to improve cache, reduce latency, optimize loaders, configure TTL/cache keys, enable HTML cache, or debug cache-control headers on a deco storefront."
 ---
 
 # Deco Cache
