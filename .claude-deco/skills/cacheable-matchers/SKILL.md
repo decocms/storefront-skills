@@ -1,13 +1,13 @@
 ---
 name: cacheable-matchers
-description: "Make deco storefront pages with matchers (A/B tests, date windows, segment targeting) cacheable at the CDN edge. Use when a page uses matcher blocks or MultivariateFlag and returns Cache-Control: no-store. Covers the framework's cache-decision gates, the cache: 'no-store' default on site loaders, the missing cacheable=true on custom matchers, the Deco-Cache-Vary-Cookies hint header, and a diagnostic checklist."
+description: "Make deco storefront pages with matchers (A/B tests, date windows, segment targeting) cacheable at the CDN edge. Use when a page uses matcher blocks or MultivariateFlag and returns Cache-Control: no-store. Covers the framework's cache-decision gates, the cache: 'no-store' default on site loaders, the missing cacheable=true on custom matchers, the inline-cookie script (1.201.2+), the cold-visitor bias trade-off, and a diagnostic checklist."
 ---
 
 # Cacheable Matchers
 
-Pages that use matcher blocks (A/B tests, date windows, query-string variants, sticky session matchers) **can** be cached at the CDN edge — but only when the site is configured correctly. The framework default for loaders is `cache: "no-store"`, and matchers without an explicit `cacheable: true` declaration also kill caching. This skill walks every gate the framework checks, the gotchas you'll hit, and a diagnostic checklist to fix a matcher page stuck on `Cache-Control: no-store`.
+Pages that use matcher blocks (A/B tests, date windows, query-string variants, sticky session matchers) **can** be cached at the CDN edge — but only when the site is configured correctly. The framework default for loaders is `cache: "no-store"`, and matchers without an explicit `cacheable: true` declaration also kill caching. This skill walks every gate the framework checks, the gotchas you'll hit, the cold-visitor bias trade-off you're accepting, and a diagnostic checklist to fix a matcher page stuck on `Cache-Control: no-store`.
 
-For the broader caching picture (loader / section / page layers), see the companion `cache` skill. This skill is the deep-dive for matcher-wrapped pages specifically.
+For the broader caching picture (loader / section / page layers), see the companion `cache` skill. This is the deep-dive for matcher-wrapped pages specifically.
 
 ---
 
@@ -17,13 +17,29 @@ For the broader caching picture (loader / section / page layers), see the compan
 // deno.json
 {
   "imports": {
-    "deco/": "https://denopkg.com/deco-cx/deco@1.201.0/",
+    "deco/": "https://denopkg.com/deco-cx/deco@1.201.2/",
     "apps/": "https://denopkg.com/deco-cx/apps@0.154.0/"
   }
 }
 ```
 
-If the site is on older versions, the runtime doesn't yet apply the matcher-aware cache decision. Bump the deps first.
+Don't forget the matching JSR pins if your `deno.json` carries both styles:
+
+```json
+"@deco/deco": "jsr:@deco/deco@1.201.2",
+"@deco/dev": "jsr:@deco/dev@1.201.2"
+```
+
+### Why 1.201.2 specifically
+
+| Version | What it added |
+|---|---|
+| `1.200.0` | Framework cookie-aware page cache decision (no more `Vary: cookie`, framework Set-Cookies don't auto-trigger no-store) |
+| `1.201.0` | Stable release of the above |
+| `1.201.1` | Inline `<script>document.cookie="..."</script>` injected into HTML body for framework cookies — survives CDN Set-Cookie stripping |
+| **`1.201.2`** | **Set-Cookie response headers stripped on cacheable HTML 200 responses** — the inline script is the source of truth. Lets CDNs running `respect_origin` cache cold-visit responses cleanly. |
+
+`apps@0.154.0` adds `cacheable=true` on `website/matchers/random.ts` and `cache: "no-store"` on ~30 personalizing loaders (cart, user, wishlist, session, orders, profile…).
 
 ---
 
@@ -32,18 +48,29 @@ If the site is on older versions, the runtime doesn't yet apply the matcher-awar
 The deco runtime applies `Cache-Control` to HTML responses based on a chain of gates. If ANY gate fails, the page falls back to `no-store, no-cache, must-revalidate`. Order of checks:
 
 1. **App middleware allow** — the active commerce app's middleware (e.g. `apps/vtex/middleware.ts`) decides per-request whether the response is safe to cache (anonymous + default segment for VTEX). It signals "yes" by setting a per-request bag key the framework reads.
-2. **No foreign Set-Cookie** — the response can carry framework cookies (`deco_matcher_*`, `deco_segment`) but any OTHER `Set-Cookie` (e.g. session, cart, tracking) makes it uncacheable.
+2. **No foreign Set-Cookie** — the response can carry framework cookies (`deco_matcher_*`, `deco_segment`) but any OTHER `Set-Cookie` (session, cart, tracking) disqualifies the response.
 3. **`vary.shouldCache !== false`** — every loader called during the render contributes to a "should we cache?" decision. Any loader with `cache: "no-store"` OR `cacheKey` returning `null` flips this to false.
 4. **All flags cacheable** — every matcher / flag that fired must export `cacheable = true` (strict equality — `undefined` fails).
 5. **HTML content type** — must be `text/html`.
 
-If all five pass, the framework emits the cacheable header pattern:
+If all five pass, the response looks like this (as of `1.201.2`):
 
 ```
 Cache-Control: public, max-age=90, stale-while-revalidate=3600, stale-if-error=86400
 Vary: Accept-Encoding
-Deco-Cache-Vary-Cookies: deco_matcher_<hash>_<split>, deco_segment
+Deco-Cache-Vary-Cookies: deco_matcher_<hash>, deco_segment
+
+<html>...
+  <script>
+    document.cookie="deco_matcher_<hash>=<value>; path=/; max-age=2592000; samesite=Lax";
+    document.cookie="deco_segment=<value>; path=/; max-age=2592000; samesite=Lax";
+  </script>
+...</html>
 ```
+
+**Notice what's missing**: there is no `Set-Cookie: deco_matcher_*` or `Set-Cookie: deco_segment` response header. Since `1.201.2` the framework strips them. The inline `<script>` in the HTML body handles client-side cookie persistence. This is what makes the response cleanly cacheable at CDNs running `respect_origin` mode (which treat any Set-Cookie as a personalization signal).
+
+**Trade-off**: this approach is JavaScript-dependent. No-JS clients (curl without a cookie jar, very old crawlers, RSS readers) won't persist matcher cookies and will re-evaluate on every request. Acceptable per the upstream rationale — matcher stickiness has been JS-dependent since `1.201.1`.
 
 ---
 
@@ -93,28 +120,46 @@ The framework gates the page cache decision on `flag.cacheable === true` (strict
 
 ### When `cacheable = true` is safe
 
-A matcher is safe to cache when its result is fully determined by inputs the CDN cache key can capture:
+A matcher is safe to mark cacheable when its result is **fully determined by inputs the CDN cache key can capture**:
 
-- **Sticky-session matchers** (`sticky = "session"`) — result persists in a `deco_matcher_*` cookie; the CDN cache key includes that cookie via `deco_segment`. ✅
-- **Date-based matchers** with short cache TTLs — result is deterministic for the request time; cache TTL bridges transitions. ✅
-- **Static matchers** (always, never, site, device, pathname, queryString) — result is request-deterministic. ✅
-- **User-agent / geo / cookie matchers** — only safe if your CDN cache key already partitions by UA/geo/cookie. Otherwise leave `cacheable` undeclared. ⚠️
+| Matcher type | Reads | Safe? |
+|---|---|---|
+| **Sticky-session** (`sticky = "session"`) | Result persisted in `deco_matcher_*` cookie, aggregated into `deco_segment` | ✅ Yes — CDN cache key includes `deco_segment` |
+| **URL-based** (path or pathname matchers) | `request.url.pathname` | ✅ Yes — URL is in cache key by default |
+| **Date / cron / static** (`always`, `never`, `date`, `cron`) | Request time or constants | ✅ Yes — short edge TTL bridges time-based transitions |
+| **Device-type** | UA hash → mobile/desktop | ✅ Yes IF CDN cache key includes device-type (it usually does on deco sites) |
+| **Query-string** | Specific URL search params | ⚠️ ONLY safe if the params are NOT in your CDN's exclude list. UTM params, gclid, fbclid etc. are typically stripped — matchers reading them would be undetectable to the cache key, causing collisions |
+| **User-agent** | Full UA string | ⚠️ Only if CDN cache key includes UA — most don't by default |
+| **Geo / IP** | Visitor location | ⚠️ Only if CDN cache key has geo bucket |
+| **Identity-keyed** (auth, session) | Per-user state from cookies the CDN strips | ❌ Never — leaks personalization across visitors |
 
-### Audit your custom matchers
+### Audit your site's custom matchers
 
 ```bash
 for f in matchers/*.ts; do
   base=$(basename "$f")
-  cacheable=$(grep -E "^export const cacheable" "$f" 2>/dev/null || echo "MISSING → page won't cache ❌")
-  echo "$base: $cacheable"
+  c=$(grep -E "^export const cacheable" "$f" 2>/dev/null || echo "MISSING ❌")
+  echo "$base: $c"
 done
 ```
 
 ### Reference — `apps@0.154.0` matcher cacheable status
 
-✅ `always`, `date`, `site`, `device`, `environment`, `host`, `queryString`, `multi`, `negate`, `never`, `pathname`, `random`
+✅ HAS `cacheable = true`: `always`, `date`, `site`, `device`, `environment`, `host`, `queryString`, `multi`, `negate`, `never`, `pathname`, `random`
 
-❌ `userAgent`, `location`, `cookie`, `cron` — still missing `cacheable`. If your site uses any of these, the page won't cache until they're either fixed upstream or shadowed locally.
+❌ MISSING `cacheable`: `userAgent`, `location`, `cookie`, `cron` — pages using these will keep going no-store until the framework declares them.
+
+### Real-world site-matcher audit (Lojas Torra example)
+
+Sites commonly accumulate custom matchers in their own `matchers/` directory. Same rules apply:
+
+| Matcher | Reads | Decision |
+|---|---|---|
+| `canonical.ts` | URL pathname + admin-baked regex | Marked `cacheable = true` ✅ |
+| `multipleCanonical.ts` | URL pathname + admin URL list | Marked `cacheable = true` ✅ |
+| `hasKitlook.ts` | PDP product data (loaded via URL+segment) | Marked `cacheable = true` ✅ — data is deterministic from cache key inputs |
+| `hasProduct.ts` | PLP product list (loaded via URL+segment) | Marked `cacheable = true` ✅ — same reasoning |
+| `utm.ts` | `?utmcampaign` query param | **NOT marked** — the CDN strips UTM params from the cache key, so matcher results would collide across UTM variants |
 
 ### Fix
 
@@ -143,7 +188,7 @@ export const cacheKey = (props: Props, req: Request) => {
 };
 ```
 
-For pure passthrough loaders where props are baked at admin level (per block instance), the default empty cacheKey is fine because the framework prefixes the key with the resolver ID, which differs per block instance.
+For pure passthrough loaders where props are baked at admin level (per block instance), the default empty cacheKey is fine — the framework prefixes the cache key with the resolver ID, which differs per block instance.
 
 ---
 
@@ -151,8 +196,8 @@ For pure passthrough loaders where props are baked at admin level (per block ins
 
 The framework distinguishes between:
 
-- **Framework cookies** — `deco_matcher_*` and `deco_segment`. These are expected and don't disqualify caching.
-- **Foreign cookies** — anything else. If a loader, section, or middleware emits a non-framework Set-Cookie on the response, the page goes no-store immediately.
+- **Framework cookies** — `deco_matcher_*` and `deco_segment`. Stripped from response headers post-`1.201.2`; persisted via inline script in HTML body instead.
+- **Foreign cookies** — anything else. If a loader, section, or middleware emits a non-framework `Set-Cookie` on the response, the page goes no-store immediately.
 
 ### Common foreign-cookie offenders
 
@@ -214,18 +259,28 @@ Work down this list in order. Each step is independent — once you find the cul
 ### 1. Check the response
 
 ```bash
-curl -sI -A "Mozilla/5.0 Chrome" https://your-site.com/your-pdp-slug/p \
-  | grep -iE "x-powered-by|cache-control|vary|set-cookie|deco-cache-vary-cookies"
+UA="Mozilla/5.0 Chrome/126"
+curl -sD /tmp/h -A "$UA" -o /tmp/b "https://your-site.com/your-page/p"
+grep -iE "x-powered-by|cache-control|vary|deco-cache-vary-cookies|^set-cookie" /tmp/h
+grep -oE 'document\.cookie="deco_(matcher_[a-z0-9_]+\.[0-9]+|segment)[^<]{0,180}' /tmp/b | head -3
 ```
 
-- `x-powered-by: deco@<version>` — confirm `1.201.0+`.
-- `cache-control: no-store` — confirmed problem.
-- `set-cookie:` — if any cookie OTHER than `deco_matcher_*`/`deco_segment` appears, **Gotcha #4**.
-- `deco-cache-vary-cookies` absent — the framework didn't even consider the page cacheable. One of gates 1–5 failed earlier.
+Expected on a cold matcher-firing request (`deco@1.201.2+`):
+
+- `x-powered-by: deco@1.201.2` (or later)
+- `cache-control: public, max-age=...` ← if this says `no-store`, the page failed a gate
+- `vary: Accept-Encoding` (NOT `Accept-Encoding, cookie`)
+- `Deco-Cache-Vary-Cookies: deco_matcher_..., deco_segment` ← framework signals which cookies are cache-identity
+- **NO `Set-Cookie: deco_matcher_*`** and **NO `Set-Cookie: deco_segment`** ← framework strips these post-`1.201.2`
+- **Inline `<script>document.cookie="deco_matcher_..."` in the HTML body** ← the new persistence mechanism
+
+If `cache-control` is `no-store` and `Deco-Cache-Vary-Cookies` is **absent**, the framework didn't even consider the page cacheable. One of gates 1–5 failed earlier.
+
+If you DO see `Set-Cookie: deco_matcher_*` in response headers, your site is on a version older than `1.201.2`. Bump.
 
 ### 2. Map the page's loaders
 
-Look at the page's CMS block JSON (`.deco/blocks/pages-*.json` for Fresh-era sites) for the page slug. Walk every block referenced and collect `__resolveType` values. Filter for anything containing `loaders/`.
+Look at the page's CMS block JSON (`.deco/blocks/pages-*.json` for Fresh-era sites) for the page slug. Walk every block referenced and collect `__resolveType` values. Filter for `loaders/`.
 
 ```bash
 python3 -c "
@@ -253,41 +308,94 @@ For each loader, verify `cache` is declared (and not `'no-store'` unless intenti
 
 Same scan, this time filtering for `matchers/` or `flags/multivariate*`. For each matcher file, verify it exports `cacheable = true`. See Gotcha #2.
 
-### 4. Check for personalizing loaders bleeding through
+### 4. Look for the catch-all `/*` page trap
+
+Many sites have a `pages-category-*.json` (or similar) with `pathTemplate: /*` that catches every URL without its own page JSON. If THAT page references a matcher missing `cacheable=true`, every catch-all-matched route goes no-store while specifically-pathed routes cache fine.
+
+Lojas Torra hit this exact pattern: `/feminino`, `/masculino`, etc. fell through to a `/*` page using `site/matchers/multipleCanonical.ts` → no `cacheable` → all category PLPs went no-store, while specific category pages like `/amarelo` (with their own page JSON) cached fine.
+
+### 5. Check for personalizing loaders bleeding through
 
 Headers and footers run on every page. If your Header calls a personalizing loader (`vtex/loaders/user.ts`, cart, session etc.), that single call disqualifies every page from caching. See Gotcha #5.
 
-### 5. Try with no cookies (cold visitor)
+### 6. Try with no cookies (cold visitor)
 
 ```bash
-curl -sI -A "Mozilla/5.0 Chrome" https://your-site.com/your-pdp-slug/p
+curl -sI -A "Mozilla/5.0 Chrome" https://your-site.com/your-page/p
 ```
 
-If the response includes `Set-Cookie: deco_matcher_*` AND `Cache-Control: public`, the framework gates are passing. The first cold visitor will always trigger a Set-Cookie (matcher fires for the first time), and CDNs typically bypass caching when Set-Cookie is in the response. Subsequent visitors who already carry the cookie won't trigger a Set-Cookie → CDN can cache.
+If the response is `Cache-Control: public, ...` and the body contains the inline `document.cookie="..."` script, the framework gates are passing.
 
-### 6. Try with framework cookies on the request
-
-Take the `deco_matcher_*` and `deco_segment` cookies from the cold response and replay:
+### 7. Try with framework cookies on the request
 
 ```bash
 curl -sI -A "Mozilla/5.0 Chrome" \
   -H "Cookie: deco_matcher_<hash>=<value>; deco_segment=<value>" \
-  https://your-site.com/your-pdp-slug/p
+  https://your-site.com/your-page/p
 ```
 
-This should return WITHOUT a fresh `Set-Cookie` for the matcher (the cookie is stable), and the response should be `Cache-Control: public, max-age=...`.
+This should return WITHOUT a fresh `Deco-Cache-Vary-Cookies` header AND no inline script for framework cookies in the body — the framework correctly skips both when cookies are stable.
 
 ---
 
-## Verifying the cache is actually working
+## The cold-visitor bias — important trade-off to understand
 
-Once the origin headers look right, CDN edge caching depends on your CDN configuration — your hosting provider handles the cache key and TTL.
+When you mark a sticky `random.ts`-style matcher as `cacheable = true`, you accept a specific statistical trade-off. Anyone running A/B tests should understand it.
 
-Markers of healthy edge caching:
+### What happens
 
-- Provider-specific cache HIT header (e.g. `cf-cache-status: HIT`) on warm requests.
-- The `age:` response header is non-zero on HIT responses.
-- Variants are isolated: requests with two different `deco_segment` cookie values get separate cache entries (curl with both sets, observe that `age` doesn't bleed between them).
+Picture the CDN cache as a row of boxes, one per `(URL × cache-key cookies × device-type)`. All cold visitors (no cookies) for a given URL share the SAME box because their `deco_segment` cookie is empty.
+
+```
+Cold visitor request
+  → CDN cache key: (URL, device, deco_segment="", vtex_segment="", VTEXSC="")
+  → All cold visitors share this single key
+  → Cache box contains: whatever variant Math.random() picked
+     on the last origin refresh of this box (every ~max-age seconds)
+  → Inline <script> in cached HTML sets visitor's cookie to that variant
+```
+
+The randomness lives at the **box refresh moment** (every ~max-age seconds, when CDN re-fetches from origin), not the **visitor request moment**.
+
+### Concrete consequence
+
+If your edge TTL is 300s (5 min), the cache box re-rolls Math.random() at most every 5 minutes. Within any 5-minute window, **every cold visitor to that URL sees the same variant**. The variant rotates over time as the box refreshes.
+
+A visitor doing 5 incognito sessions in 5 minutes will see the same variant all 5 times — that's one cache window, one variant.
+
+### Does this break a 50/50 test?
+
+It depends on traffic shape:
+
+**Long-tail catalog (most stores)**: A typical e-commerce site has tens of thousands of PDPs, each with a few visits per day. Each PDP has its OWN independent cache box, rolling Math.random() independently on its own refresh schedule. A new cold visitor lands on some PDP; that PDP's current box has either A or B with ~50% probability at any moment. Aggregate across visitors and PDPs: **functionally indistinguishable from per-visitor 50/50 randomization**.
+
+**Concentrated traffic (single-product launches, viral items, single-page tests)**: One URL gets thousands of hits per hour. Each 5-min window batches hundreds of visitors into one variant. The aggregate still trends ~50/50 over enough time, but variance within any short window is severe (100/0 splits per window). Statistical power to detect small lift drops. Time-of-day buying behavior can correlate with variant assignment and confound the analysis.
+
+### Rule of thumb
+
+- **Visual / CSS-only A/B tests** (e.g., button color, mobile button position, layout tweaks): the bias doesn't matter. Mark sticky matchers cacheable, get the edge-caching win.
+- **Content-different A/B tests** (different copy, different hero images, different promo logic): consider one of the mitigations below.
+- **Small-lift conversion tests on a top-10 SKU**: don't mark the matcher cacheable. Take the origin-load hit for that test's pages.
+
+### Mitigations
+
+| Option | Effect | Cost |
+|---|---|---|
+| **Lower edge TTL** (e.g. `max-age=60`) | Variant rotates 5× more often per box | 5× more origin requests during the test |
+| **Don't mark this specific matcher `cacheable`** | Pages using it go no-store; other matchers/pages still cache | Loses edge caching for affected pages only |
+| **Deterministic bucketing** (custom matcher) | Hash visitor IP/UA into 2 buckets, each bucket → one variant; per-visitor stable; cache key includes bucket → variants get separate boxes | New matcher work; 2× cache entries per URL |
+| **Move matcher to client-side** | Server renders bucket-agnostic shell; JS picks variant on hydrate | First-paint can't show variant; different UX pattern |
+
+---
+
+## When NOT to chase matcher caching
+
+- **Logged-in user flows** — checkout, account, order history. These rightly stay no-store.
+- **Non-default VTEX segments** — campaigns, price tables, region overrides. The apps middleware keeps these requests no-store; that's correct.
+- **Identity-keyed matchers** — anything reading auth, session, or per-user state. Never mark these cacheable.
+- **Long-tail search queries** — `vtex/loaders/intelligentSearch/productListingPage.ts` explicitly returns `cacheKey: null` for search terms not in the site's `cachedSearchTerms` allowlist. Search for popular terms caches; long-tail doesn't. Working as designed; not a bug. Customers who want a specific term cached add it to `cachedSearchTerms.extraTerms`.
+
+If you're in any of these cases, the page legitimately should not cache.
 
 ---
 
@@ -299,35 +407,29 @@ When the framework emits a cacheable response, it includes:
 Deco-Cache-Vary-Cookies: deco_matcher_3425517349_0.5, deco_segment
 ```
 
-This is a documentation header — it lists which framework cookies are part of the cache identity contract for that response. Your CDN operator should ensure their cache key includes these cookies (or specifically `deco_segment`, which aggregates all sticky flag state).
+This is a documentation header — it lists which framework cookies are part of the cache identity contract for that response. Your CDN operator should ensure the cache key includes these cookies (or specifically `deco_segment`, which aggregates all sticky flag state).
 
-It only appears when the framework actually sets Set-Cookies on this response. On warm requests where the cookies are stable (matching the request), no new Set-Cookie is emitted and the hint header is absent — but the cache contract is still in effect.
-
----
-
-## When NOT to chase matcher caching
-
-- **Logged-in user flows** — checkout, account, order history. These rightly stay no-store.
-- **Non-default VTEX segments** — campaigns, price tables, region overrides. The apps middleware will keep these requests no-store; that's correct.
-- **Content-different A/B tests where statistical balance matters from cold traffic** — the first cold visitor's variant gets cached and served to subsequent cold visitors for the TTL window, which can bias the test. Acceptable for visual A/B tests (e.g. button color, CSS tweaks); problematic for major content swaps.
-
-If you're in any of these cases, the page legitimately should not cache. This skill applies to truly cacheable matcher pages: visual A/B tests, date-window banners, sticky segment-based variants where the variant difference is bounded and the cache TTL is acceptable.
+It only appears when the framework actually had framework Set-Cookies queued for this response (which it then stripped). Warm requests where cookies were stable on the way in don't emit it, but the cache contract is still in effect.
 
 ---
 
 ## Agent workflow — applying this to a site
 
-1. **Confirm versions** — `deco@1.201.0+` and `apps@0.154.0+` in `deno.json`. Bump if needed.
+1. **Confirm versions** — `deco@1.201.2+` and `apps@0.154.0+` in `deno.json` (URL and JSR pins). Bump if needed.
 2. **Audit site loaders** (`loaders/*.ts`) — every loader missing `export const cache` defaults to no-store. Declare `cache: "stale-while-revalidate"` (and an explicit `cacheKey` if props vary) on every loader that returns public data. Mark genuinely personalizing loaders `cache: "no-store"` and plan to move that rendering client-side.
-3. **Audit custom matchers** (`matchers/*.ts`) — every matcher missing `export const cacheable = true` will keep the pages it lands on uncacheable. Add the export to every matcher whose result is deterministic from cache-key inputs.
-4. **Audit personalizing loaders bleeding into shared sections** — Header, Footer, and any site-wide section. If they call `vtex/loaders/user.ts` or similar, move that rendering to an island.
-5. **Audit foreign Set-Cookies** — grep `setCookie\|Set-Cookie` across loaders/sections/middleware. Move tracking and session cookies to client-side JS.
-6. **Verify with curl** — work down the diagnostic checklist above. Both cold and warm requests should produce the expected headers.
+3. **Audit custom matchers** (`matchers/*.ts`) — every matcher missing `export const cacheable = true` will keep the pages it lands on uncacheable. Add the export to every matcher whose result is deterministic from cache-key inputs. **Audit query-param matchers separately**: if your CDN strips a param from the cache key (UTM, gclid, etc.) and a matcher reads it, do NOT mark that matcher cacheable.
+4. **Check the catch-all `/*` page trap** — if a `pages-category-*.json` (or similar) covers `/*`, look at its matchers. A missing `cacheable=true` there flips every category route off the cache.
+5. **Audit personalizing loaders bleeding into shared sections** — Header, Footer, and any site-wide section. If they call `vtex/loaders/user.ts` or similar, move that rendering to an island.
+6. **Audit foreign Set-Cookies** — grep `setCookie\|Set-Cookie` across loaders/sections/middleware. Move tracking and session cookies to client-side JS.
+7. **Verify with curl** — work down the diagnostic checklist above. Cold and warm requests should produce the expected headers + inline script.
+8. **Understand the cold-visitor bias** — if any of your sticky-session matchers is marked `cacheable: true`, you've accepted that all cold visitors to a given URL during a cache window see the same variant. Confirm this is acceptable for each test; for visual tests it's fine, for content-meaningful tests consider the mitigations.
 
 ### Priority order
 
 1. Loader `cache` declarations (Gotcha #1) — biggest impact, fastest fix.
-2. Matcher `cacheable = true` declarations (Gotcha #2) — page-level unlock.
+2. Matcher `cacheable = true` declarations (Gotcha #2) — page-level unlock. Don't forget the catch-all page.
 3. Move personalizing renders client-side (Gotcha #5) — unblocks shared sections (Header/Footer).
 4. Strip foreign Set-Cookies (Gotcha #4) — usually small but cumulative.
 5. Loader `cacheKey` correctness (Gotcha #3) — correctness fix, doesn't affect headers but affects cache hit rates.
+
+The expected outcome: a representative PDP/PLP/home/search-with-popular-term returns `Cache-Control: public, max-age=...` with `Vary: Accept-Encoding`, `Deco-Cache-Vary-Cookies` listing the framework cookies, and an inline `<script>document.cookie=...</script>` in the HTML body. Long-tail search, cart, checkout, and logged-in flows correctly stay `no-store`.
