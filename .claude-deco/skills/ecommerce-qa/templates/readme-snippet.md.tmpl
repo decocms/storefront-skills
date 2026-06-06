@@ -1,0 +1,48 @@
+## QA / E2E
+
+This store has automated E2E coverage of the purchase journey (home → PLP → PDP → cart → checkout), driven by [`@decocms/qa`](https://github.com/decocms/qa).
+
+### Locally
+
+```sh
+# Against your dev server (default: http://localhost:8000)
+bun run qa:local
+
+# Against staging or a specific URL
+./scripts/qa-local.sh https://staging.example.com
+
+# Headless smoke run
+bun run qa:smoke
+```
+
+The local run opens a real browser and pauses at each step so you can inspect the page. Useful when a CI run fails and you want to reproduce.
+
+### In CI
+
+- **PRs:** [`.github/workflows/qa-pr.yml`](./.github/workflows/qa-pr.yml) waits for the decobot preview comment, extracts the URL, and runs the journey against it. Result appears as a check named "Purchase journey".
+- **main:** [`.github/workflows/qa-main.yml`](./.github/workflows/qa-main.yml) runs the journey against the production URL on every push to `main` and on manual dispatch.
+
+### Adding coverage
+
+The journey relies on `data-qa-*` attributes in the JSX. The canonical slugs are documented in the [engine README](https://github.com/decocms/qa#canonical-data-qa-attributes). To extend with a new slug:
+
+1. Mark the element in this repo's JSX.
+2. Open a PR on `@decocms/qa` to add the slug to the canonical list.
+
+### Debugging a failed run
+
+1. Open the failed workflow in GitHub Actions.
+2. Download the `qa-output-*` artifact (contains screenshots + JSON report).
+3. Re-run locally against the same URL: `./scripts/qa-local.sh <preview-url>`.
+
+### Configuration
+
+`.qarc.json` at the repo root:
+
+| Field | Meaning |
+|---|---|
+| `url` | Production URL (used by the `main` workflow). |
+| `cep` | Brazilian postal code (used for shipping calculation steps). |
+| `viewports` | Which viewports to run — `desktop`, `mobile`, `tablet`. |
+| `selectors` | Per-slug CSS selector overrides. Use sparingly — prefer marking the JSX. |
+| `features` | Engine flags — e.g. `checkoutUrlPattern` (assert checkout by URL glob), `checkoutCrossOrigin`, `dismissOverlaysHeuristic`. |

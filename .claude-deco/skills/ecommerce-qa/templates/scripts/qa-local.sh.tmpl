@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Run the QA purchase journey against a local or remote URL with browser visible.
+#
+# Usage:
+#   ./scripts/qa-local.sh                     # localhost:8000 (default dev server)
+#   ./scripts/qa-local.sh http://localhost:3000
+#   ./scripts/qa-local.sh https://staging.example.com
+#
+# Tips:
+#   - Add --debug to pause at each step for inspection (already enabled below).
+#   - Remove --headed to run headless (faster).
+#   - Use scripts/qa-smoke.sh (or `bun run qa:smoke`) for headless smoke runs.
+
+set -euo pipefail
+
+TARGET_URL="${1:-http://localhost:8000}"
+
+echo "Running QA journey against: $TARGET_URL"
+echo "  Config: .qarc.json"
+echo "  Mode: headed + debug (pauses at each step)"
+echo ""
+
+bunx @decocms/qa journey \
+  --url "$TARGET_URL" \
+  --headed \
+  --debug

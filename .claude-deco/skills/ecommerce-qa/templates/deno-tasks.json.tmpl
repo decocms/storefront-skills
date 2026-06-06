@@ -1,0 +1,7 @@
+{
+  "tasks": {
+    "qa:local": "deno run -A npm:@decocms/qa@latest journey --url http://localhost:8000 --headed --debug",
+    "qa:smoke": "deno run -A npm:@decocms/qa@{{ENGINE_VERSION}} journey --smoke",
+    "qa:run": "deno run -A npm:@decocms/qa@{{ENGINE_VERSION}} journey --junit junit.xml --github"
+  }
+}
