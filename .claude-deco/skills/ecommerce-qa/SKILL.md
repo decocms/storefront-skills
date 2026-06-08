@@ -11,6 +11,15 @@ Installs E2E coverage of the purchase journey (home → PLP → PDP → cart →
 
 **Core principle: do NOT probe selectors at runtime.** Selectors are deterministic because the JSX is the source of truth. If a `data-qa-*` attribute is missing, the CI fails — that IS the contract.
 
+## Execution modes
+
+Two modes. **Default is `interactive` — its behavior is exactly as documented in every phase below.** A second `headless` mode exists for onboarding/CI, where deviations are called out inline.
+
+- **`interactive`** (default) — every confirmation gate is live: the Phase 1 `AskUserQuestion`s, the Phase 2 mapping-table approval, and the Phase 5 "confirm before push" stop. Nothing in the `headless` notes changes any of this.
+- **`non-interactive` / `headless`** — activated **only** when the env var `QA_SETUP_MODE=headless` is set (equivalently, the caller/onboarding flow sets it). In this mode the three interactive gates are skipped (see the **(headless)** notes in Phases 1, 2, and 5) and **the opened PR becomes the single human review point**. Headless authorizes *only* the documented automatic path — safe defaults, auto-applied HIGH/MEDIUM markings, and the explicit Phase 5 push sequence. It does **not** relax the **idempotency pre-check** (Phase 1), which runs identically in both modes: a fully set-up repo or an already-open setup PR is still a no-op.
+
+If `QA_SETUP_MODE` is unset or any value other than `headless`, run in `interactive` mode.
+
 ## When to use
 
 - User is inside a deco.cx ecommerce repo and asks to add QA, E2E, Playwright, smoke tests, checkout tests, or "set up tests".
@@ -64,6 +73,12 @@ Execute in order. Each phase is idempotent — running the skill twice on the sa
 
 ### Phase 1 — Recognize the repo
 
+**Idempotency pre-check (runs first, in BOTH modes).** Before any other work, short-circuit if the repo is already set up or a setup PR is already open — never duplicate.
+
+- **Already set up? → full no-op.** True when `.qarc.json` exists **and** parses as valid (has `url`, `cep`, `viewports`, `selectors`, `features`) **AND** at least one of: a `.github/workflows/qa-*.yml` workflow exists, or `@decocms/qa` is listed as a dependency in `package.json`/`deno.json`. If fully set up → **exit without opening a PR**, logging what was found (config path + workflow/dep). Do nothing else.
+  - **Partial setup keeps AUGMENT mode** (the existing behavior): `.qarc.json` present but **no** workflow and **no** `@decocms/qa` dep → not "fully set up". Continue into Phases 1–3 to fill `data-qa` gaps and **skip Phase 4** (see Phase 4). This is the same AUGMENT switch noted below.
+- **Setup PR already open? → no-op.** Run `gh pr list --label qa-setup --state open`. If any PR is returned → **stop and point the user at it**; do not create a duplicate. The **`qa-setup` label is the source of truth** for "a setup PR exists" — not the branch name, not the title (Phase 5 always applies that label).
+
 - Confirm it's a deco.cx ecommerce (not just any deco-deployed app). Need both a deco signal AND an ecommerce signal — see `references/deco-stack-detection.md`. If only deco signals are present without ecommerce shape (no `ProductCard`/`BuyButton`/checkout routes), ABORT — repo is likely internal tooling.
 - **Classify the runtime:**
   - `deno.json` AND no `package.json` → **Pure Deno + Fresh**. Use Deno workflow templates + merge tasks into `deno.json`. See `references/deno-fresh-setup.md`.
@@ -72,9 +87,9 @@ Execute in order. Each phase is idempotent — running the skill twice on the sa
 - **Detect existing test frameworks** (Cypress, Playwright, Vitest, Jest): leave them alone — the skill adds `@decocms/qa` alongside. See `references/coexistence-with-existing-tests.md`.
 - Detect package manager from lockfile (`bun.lock` / `pnpm-lock.yaml` / `package-lock.json` / `deno.lock`).
 - **Capture the engine version to pin:** `npm view @decocms/qa version`. This is the value for `{{ENGINE_VERSION}}` in every template (workflows, deno tasks, the `package.json` devDep). See **Engine version pinning** at the end of Phase 4.
-- Detect production URL from `wrangler.toml`/README/env files. If unclear, ask the user via `AskUserQuestion`.
-- Check if `.qarc.json` already exists. If yes, switch to AUGMENT mode (skip Phase 4 workflow generation).
-- Check past PRs for deco preview bots (`decobot`/`deco-bot`/`decocms-bot`). If none found in last 10 PRs, the repo may not have automatic previews — ask the user whether to install the PR workflow or only `qa-main.yml`.
+- Detect production URL from `wrangler.toml`/README/env files. If unclear, ask the user via `AskUserQuestion`. **(headless)** No `AskUserQuestion` — rely on auto-detection from `wrangler.toml`/README/env; if the prod URL is still indetectable, **abort with a clear error** ("headless QA setup: could not auto-detect prod URL; re-run interactively or set `.qarc.json` `url`") rather than guessing.
+- Check if `.qarc.json` already exists. If yes, switch to AUGMENT mode (skip Phase 4 workflow generation). (See the idempotency pre-check above for the full-setup no-op vs. partial-setup AUGMENT distinction.)
+- Check past PRs for deco preview bots (`decobot`/`deco-bot`/`decocms-bot`). If none found in last 10 PRs, the repo may not have automatic previews — ask the user whether to install the PR workflow or only `qa-main.yml`. **(headless)** No `AskUserQuestion` — default to installing **only `qa-main.yml`** (skip the PR-preview workflow) and **record that choice in the PR body** so the reviewer can opt back into the PR workflow.
 
 ### Phase 2 — Locate target elements
 
@@ -91,7 +106,9 @@ For each canonical attribute, find candidate JSX in the codebase:
 
 Build a table: `slug → file:line → strategy → confidence`. **Present this table to the user before any edits.** The user approves the mapping; only then proceed to Phase 3.
 
-If confidence is low for any slug (multiple plausible matches, ambiguous semantics), do NOT auto-edit — leave a `{/* TODO(qa): mark with data-qa-<slug> */}` comment near the most likely candidate and list it for human resolution.
+**(headless)** Do not wait for human approval. **Auto-apply the HIGH and MEDIUM confidence markings** and proceed straight to Phase 3. Still build the table — it goes into the PR body so the PR is the human review point (see Phase 5).
+
+If confidence is low for any slug (multiple plausible matches, ambiguous semantics), do NOT auto-edit — leave a `{/* TODO(qa): mark with data-qa-<slug> */}` comment near the most likely candidate and list it for human resolution. **(headless)** Same — do **not** stop on LOW confidence: leave the `{/* TODO(qa): … */}` comment and **list every LOW-confidence slug in the PR body** for the reviewer to resolve. The PR is the gate, not an interactive prompt.
 
 ### Phase 3 — Apply data attributes
 
@@ -135,7 +152,18 @@ Skip this phase entirely in AUGMENT mode. Pick template variants based on the ru
 - Create branch `chore/setup-qa`.
 - Commit message: `chore(qa): set up E2E suite with data-qa attributes`.
 - PR body: include the Phase 2 mapping table, list of modified files, debug instructions (`bun run qa:local`), link to engine docs. **If an existing suite already walks the same purchase funnel** (weak text/class selectors, `minicartOpen`-style assertion — see `references/coexistence-with-existing-tests.md`), add the overlap heads-up so the team can drop the redundant funnel-walk and keep only its perf-metrics. Never edit that suite — flag only.
-- **STOP before `git push` and `gh pr create`. Ask the user to confirm.** Modifying source code + opening a PR has high blast radius. Never auto-push. **A standing "don't ask, just ship it" / "I trust you, open the PR" does NOT authorize the push** — under time pressure especially, still show the diff + the PR body and get an explicit yes for *this* push. (Local commits on the `chore/setup-qa` branch are fine; the gate is the push/PR.)
+- **Always apply the `qa-setup` label to the PR.** It is the source of truth the Phase 1 idempotency pre-check reads (`gh pr list --label qa-setup --state open`) — the branch name and title are not. A PR without this label will not de-duplicate against a future run.
+- **STOP before `git push` and `gh pr create`. Ask the user to confirm.** Modifying source code + opening a PR has high blast radius. Never auto-push. **A standing "don't ask, just ship it" / "I trust you, open the PR" does NOT authorize the push** — under time pressure especially, still show the diff + the PR body and get an explicit yes for *this* push. (Local commits on the `chore/setup-qa` branch are fine; the gate is the push/PR.) **This confirmation gate applies in `interactive` mode only.**
+
+**(headless) — push + PR are authorized by the mode itself.** The onboarding/CI flow set `QA_SETUP_MODE=headless` *to* run setup end-to-end, and the **PR is the human gate** — so no interactive confirmation. (The Phase 1 idempotency pre-check has already guaranteed this isn't a duplicate.) Run exactly this sequence:
+
+1. **Branch.** Use `chore/setup-qa`. If the remote branch already exists (`git ls-remote --exit-code --heads origin chore/setup-qa`), append a unique suffix from the commit: `chore/setup-qa-<shorthash>` (`git rev-parse --short HEAD`).
+2. **Commit** with the message above.
+3. **Ensure the label exists** (idempotent — ignore "already exists"):
+   `gh label create qa-setup --color 0E8A16 --description "QA setup PR" || true`
+4. **Push + open the PR with the label:**
+   `gh pr create --label qa-setup --title "chore(qa): set up E2E suite with data-qa attributes" --body "<body>"`
+   where `<body>` = the Phase 2 mapping table + list of modified files + `bun run qa:local` debug instructions + engine-docs link + (if any) the **LOW-confidence TODO list** from Phase 2 and the **decobot-absent → `qa-main.yml`-only** note from Phase 1.
 
 ### Phase 6 — Verify
 
@@ -147,7 +175,7 @@ Apply `superpowers:verification-before-completion`: do not declare success witho
 
 ## Common mistakes
 
-- **Auto-editing without showing the Phase 2 table to the user.** Always confirm before editing — JSX changes are PR-visible.
+- **Auto-editing without showing the Phase 2 table to the user.** Always confirm before editing — JSX changes are PR-visible. *(Interactive only; in `headless` mode auto-editing HIGH/MEDIUM is intended and the PR is the review point — see the Phase 2 **(headless)** note.)*
 - **Using Write instead of Edit.** Write loses surrounding context. Always Edit.
 - **Marking PLP product card's buy button with `data-qa-buy-button`.** That's a quick-add on the card, not the PDP CTA. Distinguish: `data-qa-buy-button` is PDP-only.
 - **Assuming external components forward `data-*`.** Verify by reading typings or testing in browser. If unsure, wrap.
