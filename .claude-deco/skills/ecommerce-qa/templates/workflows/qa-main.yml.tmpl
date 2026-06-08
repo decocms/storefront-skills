@@ -1,0 +1,118 @@
+name: QA (main)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Override the URL to test against (defaults to .qarc.json url)
+        required: false
+        type: string
+
+concurrency:
+  group: qa-main
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: Purchase journey (prod)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # A push to main only *triggers* the deco prod build/deploy, which runs
+      # asynchronously off GitHub Actions (minutes). deco posts a commit status
+      # "Deco / <site> / prod" (legacy status API, not a check-run) that flips
+      # pending -> success once prod is live. Wait for it so the journey runs
+      # against the freshly-deployed prod, not the previous version. The context
+      # carries the per-store slug, so match it with a pattern (site-agnostic).
+      - name: Wait for deco prod deploy
+        if: github.event_name == 'push'
+        uses: actions/github-script@v7
+        with:
+          retries: 3
+          script: |
+            const SHA = context.sha;
+            const TIMEOUT_MS = 20 * 60 * 1000;     // prod builds take a few minutes
+            const POLL_INTERVAL_MS = 20_000;
+            const PROD_CONTEXT = /^Deco \/ .+ \/ prod$/;
+            const deadline = Date.now() + TIMEOUT_MS;
+            while (Date.now() < deadline) {
+              const { data } = await github.rest.repos.getCombinedStatusForRef({
+                owner: context.repo.owner, repo: context.repo.repo, ref: SHA,
+              });
+              const prod = data.statuses.find(s => PROD_CONTEXT.test(s.context));
+              if (prod?.state === 'success') {
+                core.info(`deco prod deploy succeeded (${prod.context}).`);
+                return;
+              }
+              if (prod && (prod.state === 'failure' || prod.state === 'error')) {
+                core.setFailed(`deco prod deploy ${prod.state} — skipping QA. Logs: ${prod.target_url}`);
+                return;
+              }
+              core.info(prod ? `prod deploy ${prod.state}, polling...` : 'no deco prod status yet, polling...');
+              await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+            }
+            core.setFailed('Timed out waiting for the deco prod deploy. Re-run via workflow_dispatch to bypass.');
+
+      # @decocms/qa drives Playwright but does not ship browser binaries. Install the
+      # Chromium build matching the playwright version the engine resolves. ubuntu-latest
+      # ships Node+npm, so npm/npx are available.
+      - name: Install Playwright browsers (matching engine)
+        run: |
+          PW=$(npm view @decocms/qa@{{ENGINE_VERSION}} dependencies.playwright)
+          echo "Engine playwright range: $PW"
+          npx --yes "playwright@$PW" install --with-deps chromium chromium-headless-shell
+
+      - name: Resolve target URL
+        id: target
+        env:
+          INPUT_URL: ${{ inputs.url }}
+        run: |
+          if [ -n "$INPUT_URL" ]; then
+            echo "url=$INPUT_URL" >> "$GITHUB_OUTPUT"
+          else
+            URL=$(bun -e "console.log(require('./.qarc.json').url)")
+            echo "url=$URL" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run purchase journey
+        env:
+          TARGET_URL: ${{ steps.target.outputs.url }}
+        run: |
+          bunx @decocms/qa@{{ENGINE_VERSION}} journey \
+            --url "$TARGET_URL" \
+            --junit junit.xml \
+            --github \
+            --viewports desktop,mobile
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-output-main-${{ github.run_id }}
+          path: |
+            junit.xml
+            qa-output/
+          retention-days: 30
+
+      - name: Publish test report
+        if: always()
+        uses: dorny/test-reporter@v2
+        with:
+          name: Purchase journey (prod)
+          path: junit.xml
+          reporter: java-junit
+          fail-on-error: false
