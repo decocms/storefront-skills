@@ -18,6 +18,8 @@ If you'd rather not mark a checkout DOM element — the checkout page is opaque/
 
 The engine then passes the checkout step when the post-click URL matches the glob, and `data-qa-checkout-page` is **not** required. Unlike `checkoutCrossOrigin`, it does **not** require the origin to change — it just checks the URL, so it works for same-origin checkouts too. *(Learning: Montecarlo settled on `"**/checkout**"`; commit "validate checkout by URL".)*
 
+**This is the recommended default whenever the checkout DOM isn't yours to mark** — including VTEX served same-origin at `/checkout` (see Pattern 2a). When the store doesn't own the checkout markup, asserting the URL is cleaner and more robust than reaching for a selector in someone else's DOM. *(Learning: aviator — VTEX same-origin checkout, 0 redirects; `checkoutUrlPattern: "**/checkout**"` was the clean fix, no DOM marker needed.)*
+
 ## Pattern 2 — VTEX checkout: figure out same-origin vs cross-origin FIRST
 
 VTEX checkout lives outside the deco repo, so you can't add `data-qa-checkout-page` to its JSX. But there are **two very different cases**, and picking the wrong one makes step 8 fail. Decide by inspecting the live checkout before configuring:
@@ -29,7 +31,19 @@ curl -s -o /dev/null -w "final: %{url_effective}\nredirects: %{num_redirects}\n"
 
 ### 2a — Same-origin checkout (VTEX *legacy* checkout — the common case)
 
-`https://STORE.com/checkout` returns 200 with **0 redirects** — the checkout renders on the storefront's own origin (e.g. `www.osklen.com.br/checkout`). The engine's default checkout-step mode (wait for `[data-qa-checkout-page]`) works **because Playwright can read the same-origin DOM** — you just map the slug to a stable selector that VTEX's checkout already renders, via the `selectors` override in `.qarc.json`:
+`https://STORE.com/checkout` returns 200 with **0 redirects** — the checkout renders on the storefront's own origin (e.g. `www.osklen.com.br/checkout`). The checkout DOM belongs to VTEX, **not to your deco repo**, so there's nothing of yours to mark `data-qa-checkout-page` on. Two valid options:
+
+**Recommended (default): assert the URL — don't mark a DOM that isn't yours.** Set a URL glob and skip the DOM marker entirely:
+
+```json
+{
+  "features": { "checkoutUrlPattern": "**/checkout**" }
+}
+```
+
+This is the clean path for VTEX same-origin: the engine passes the checkout step when the post-click URL matches, no marker required. (Detail in "Asserting by URL instead of a DOM marker" above.) *(Learning: aviator — VTEX same-origin, 0 redirects; `checkoutUrlPattern` was the fix.)*
+
+**Alternative: map the slug to VTEX's stable DOM hook.** If you'd rather assert on the DOM, the engine's default checkout-step mode (wait for `[data-qa-checkout-page]`) works **because Playwright can read the same-origin DOM** — map the slug to a selector VTEX already renders, via the `selectors` override:
 
 ```json
 {
@@ -38,6 +52,8 @@ curl -s -o /dev/null -w "final: %{url_effective}\nredirects: %{num_redirects}\n"
 ```
 
 VTEX legacy checkout always renders `<body id="checkoutMainContainer" class="…-vtexcommercestable-com-br …">` (other stable hooks: `.checkout-container`, `#cart-title`, `#orderform-title`). `#checkoutMainContainer` is present in the very first HTML response, so it resolves immediately. **Do NOT set `checkoutCrossOrigin` here** — the checkout origin doesn't change, and `checkoutCrossOrigin: true` asserts the origin *did* change, so it would fail. Confirm the selector exists: `curl -s https://STORE.com/checkout | grep -o 'id="checkoutMainContainer"'`.
+
+> A `GET /checkout?orderFormId=test` returning **403 when probed outside the journey is normal** (no session / orderForm yet) — it does not mean checkout is broken. Inside the journey, with a real cart built up, the navigation lands on `/checkout` and matches `checkoutUrlPattern`. Don't let a standalone 403 probe push you toward `checkoutCrossOrigin`; trust the redirect count from the `curl … -L` check.
 
 ### 2b — Cross-origin checkout (redirects to `secure.STORE.com` / `*.vtexcommercestable.com.br`)
 
@@ -87,7 +103,7 @@ A PDP often has the main buy button AND a sticky mobile bar with another buy but
 **Handling:**
 - If both work, the engine just clicks the first. No problem.
 - If one is hidden behind a `display:none` or off-screen, the engine handles via Playwright's auto-wait + visibility check.
-- Edge case: variant selector (color/size) keeps the buy button **disabled** until a variant is picked. The engine clicks the first available `data-qa-variant-option` option after PDP load, then clicks `data-qa-buy-button`.
+- Edge case: variant selector (color/size) keeps the buy button **disabled** until a variant is picked. On **engine ≥ 0.5** the engine clicks the first available `data-qa-variant-option` after PDP load **and then** clicks the (now-enabled) `data-qa-buy-button` — so marking the options alone works. On the **older click-buy-first order** the disabled first click was a no-op and the buy button also needed `data-qa-variant-confirm` (see `data-qa-conventions.md` → `data-qa-variant-confirm`, Cases A/B).
 
 **`data-qa-variant-option` is canonical** — mark the variant options whenever a store gates add-to-cart behind selection. Key detail: mark the **visible, clickable** element (usually a styled `<label for={…}>`), NOT a `hidden` `<input type="radio">`, and cover **every render branch** (product type often branches the JSX).
 
@@ -96,6 +112,8 @@ A PDP often has the main buy button AND a sticky mobile bar with another buy but
 ## When to add a slug-override in .qarc.json
 
 The `selectors` block of `.qarc.json` lets a specific slug fall back to a CSS selector instead of `[data-qa-<slug>]`. Use sparingly — overrides defeat the purpose of standardization.
+
+> **⚠️ An override only applies when the `[data-qa-<slug>]` attribute exists NOWHERE in the DOM.** The engine's `findSelector` tries the raw `[data-qa-<slug>]` selector **first** and only falls back to `selectors[slug]` when that match comes up empty. So an override **cannot redirect** a slug that's already present — e.g. if you over-marked `data-qa-category-link` on several links, the raw selector matches the (wrong) first one and your override is silently ignored. The error message's "…or set overrides.selectors[…]" hint is misleading in that case: the real fix is at the JSX source (mark only the right element). See `references/category-link-disambiguation.md`. *(Learning: aviator.)*
 
 Valid reasons to use an override:
 - **External component impossible to wrap** (rare). E.g., a Web Component shadow-rooted by the design system.

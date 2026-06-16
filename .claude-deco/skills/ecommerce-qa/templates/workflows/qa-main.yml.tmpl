@@ -14,6 +14,15 @@ concurrency:
   group: qa-main
   cancel-in-progress: false
 
+# Declared explicitly: a restricted permissions block drops every scope not listed,
+# including the default `contents: read` — without it actions/checkout fails with
+# "repository not found" (git exit 128). Keep `contents: read` plus the scopes this
+# job actually needs.
+permissions:
+  contents: read   # actions/checkout
+  statuses: read   # getCombinedStatusForRef (deco prod commit status)
+  checks: write    # dorny/test-reporter publishes the check run
+
 jobs:
   e2e:
     name: Purchase journey (prod)
