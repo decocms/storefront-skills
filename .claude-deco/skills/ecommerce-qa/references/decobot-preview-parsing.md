@@ -2,6 +2,8 @@
 
 The deco platform posts a PR comment when a preview is ready. The bot's username, the comment format, and the URL host have varied across platform versions, so the workflow must match **multiple styles**.
 
+> **Prerequisite: the workflow MUST check out the repo, or `.qarc.json` is ignored.** The engine loads its config from `join(process.cwd(), ".qarc.json")` — i.e. only if the file is present in the runner's working directory. **Without an `actions/checkout` step the file doesn't exist on the runner**, and the journey runs with just `--url` + built-in defaults: `features.checkoutUrlPattern`, `viewports`, and `selectors` are all **silently dropped**. The shipped templates always check out first; this bites anyone hand-writing a simplified manual workflow that skips checkout (it feels unnecessary when you "only" need a URL). Typical symptom: `data-qa-checkout-page missing` even though `checkoutUrlPattern` is set in `.qarc.json`, or viewport scoping being ignored. *(Learning: aviator.)*
+
 ## Known comment styles
 
 ### Style A — Visible "Visit Preview" link (older `decobot`)

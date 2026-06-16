@@ -17,6 +17,7 @@ Anchor that navigates from home to a PLP. Apply to the category links in the hea
 - **Placement:** `<a href="/c/...">` element or its equivalent in `<Link>`.
 - **Cardinality:** multiple OK; engine resolves visibility-aware.
 - **Drawer-only links:** if the only `data-qa-category-link` lives inside a closed hamburger drawer, also mark `data-qa-menu-trigger` (see below) so the engine can open the drawer before clicking.
+- **⚠️ Generic nav component → mark ONLY links that open a PLP.** When the header renders institutional links, dropdown triggers and category links through one shared component (e.g. `NavItem.tsx`) with identical markup, marking the generic anchor puts `data-qa-category-link` on **all** of them. The engine's `findSelector` clicks the **first `[data-qa-category-link]` in DOM order** (usually the institutional link) → a product-less page → `enter-pdp` fails with `data-qa-product-card missing`. A `.qarc.json` `selectors` override does **not** fix this (the raw attribute already matches, so the override is never consulted). Fix at the JSX source by gating the attribute on a store-specific PLP discriminator (e.g. `href?.includes("sort=")`). Full write-up + verification in `references/category-link-disambiguation.md`. *(Learning: aviator.)*
 
 ### `data-qa-menu-trigger` (optional but recommended for mobile-first headers)
 The hamburger / menu-opener button that reveals a navigation drawer containing the category links. Used by the engine at step 2 (`navigate-plp`) when no visible `data-qa-category-link` exists — engine clicks the trigger to open the drawer, then re-resolves the category link.
@@ -62,25 +63,32 @@ The size/variant option(s) on the PDP. Many stores (e.g. fashion/apparel on VTEX
 
 > ⚠️ The slug is `data-qa-variant-option` (confirm with `qa list-slugs`). An earlier draft of this skill guessed `data-qa-pdp-variants` — that name is **wrong** and the engine ignores it.
 
-**Know the engine's exact step-5 order** (it's the source of the #1 gotcha below): `click data-qa-buy-button` → poll & click first in-stock `data-qa-variant-option` → poll & click `data-qa-variant-confirm` → check cart count.
+**Know the engine's exact step-5 order — it changed between engine versions, and it's the source of the gotcha below:**
+
+- **Engine ≥ 0.5 (current, the common case): variant is pre-selected BEFORE buy.** Order is: poll & click first in-stock `data-qa-variant-option` → click the now-enabled `data-qa-buy-button` → check cart count. Because buy is only clicked *after* the size is chosen, marking the variant options alone is enough — see the `data-qa-variant-confirm` note for when it's still needed.
+- **Older click-buy-first order:** `click data-qa-buy-button` → poll & click first in-stock `data-qa-variant-option` → poll & click `data-qa-variant-confirm` → check cart count. Here the first buy click hits a still-disabled button (no-op), which is exactly what made the `data-qa-variant-confirm` BOTH-marking necessary.
+
+Confirm the order for the version you pinned (the engine's docs / `list-slugs` output reflect the current behavior).
 
 - **Placement:** the **visible, clickable** option element — usually the `<label for={…}>`, NOT the underlying `<input type="radio" class="hidden">`. Stores frequently hide the radio and style a `<label>` as the button; mark the label so Playwright can actually click it.
 - **Mark every render branch.** Selectors often branch by product type (shoes / single-size / apparel) — mark the option in each branch so coverage holds regardless of product.
 - **Cardinality:** many per PDP (one per size). The engine resolves the first in-stock / clickable one.
 - **Skip if:** the store adds to cart without any variant choice (single SKU, or selection is optional).
 
-### `data-qa-variant-confirm` — **mark the buy button with this too when buy is disabled-until-variant** 🔑
-This is the **most important** variant learning. The engine clicks `data-qa-buy-button` **first**, *then* selects the variant. But a variant-gated buy button is **disabled** at that first click → the click is a no-op → and the engine **never clicks buy again**. Result: nothing is added, the minicart opens empty, and step 8 (checkout) fails with "minicart-checkout not found". This looks like a VTEX/cart/session problem but is **not** — it's purely the click-order.
+### `data-qa-variant-confirm` — when it's needed (engine-version-dependent) 🔑
+Whether you need this slug depends on the engine's add-to-cart order (see the step-5 order above). Two cases, both valid:
 
-**Fix:** put `data-qa-variant-confirm` on the **same buy button** (in addition to `data-qa-buy-button`). The engine's flow becomes: click buy (disabled, no-op) → select size (buy enables) → click `data-qa-variant-confirm` (= the now-enabled buy button) → item added. The buy button legitimately serves double duty as the post-variant "confirm".
+**Case A — Engine ≥ 0.5 (pre-selection order, the common case): usually NOT needed.** The engine selects the variant *before* clicking buy, so it clicks an already-enabled `data-qa-buy-button` and the item adds normally. Marking the in-stock `data-qa-variant-option`(s) in every render branch is sufficient — leave `data-qa-variant-confirm` off unless the store has a genuine separate confirm step (Case C).
+
+**Case B — Older click-buy-first order: mark the buy button with this too.** When the engine clicks `data-qa-buy-button` **first** and *then* selects the variant, a variant-gated buy button is **disabled** at that first click → the click is a no-op → and the engine **never clicks buy again**. Result: nothing is added, the minicart opens empty, and step 8 (checkout) fails with "minicart-checkout not found". This looks like a VTEX/cart/session problem but is **not** — it's purely the click-order. **Fix:** put `data-qa-variant-confirm` on the **same buy button** (in addition to `data-qa-buy-button`). The flow becomes: click buy (disabled, no-op) → select size (buy enables) → click `data-qa-variant-confirm` (= the now-enabled buy button) → item added. The buy button legitimately serves double duty as the post-variant "confirm".
 
 ```tsx
 <Button data-qa-buy-button data-qa-variant-confirm {...btnProps}>Adicionar à Sacola</Button>
 ```
 
-Only use a *separate* confirm element if the store genuinely has one (e.g. a "confirm size" button distinct from the CTA). If add-to-cart needs no variant at all, omit this slug.
+**Case C — Genuine separate confirm element (any version):** if the store has a modal flow (click buy → a size selector opens → a distinct "confirm" button), mark *that* element with `data-qa-variant-confirm`. If add-to-cart needs no variant at all, omit this slug.
 
-> **Learning (Osklen):** the whole journey passed locally **except** step 5/8 until the buy button was also marked `data-qa-variant-confirm`. Symptom was "empty minicart / no checkout button" — easy to misread as a VTEX-localhost limitation; the real cause was the disabled-buy click-order.
+> **Learning (Osklen):** on the older click-buy-first engine, the whole journey passed locally **except** step 5/8 until the buy button was also marked `data-qa-variant-confirm`. Symptom was "empty minicart / no checkout button" — easy to misread as a VTEX-localhost limitation; the real cause was the disabled-buy click-order. **On engine ≥ 0.5 this same store would pass with just `data-qa-variant-option` marked**, because the engine now pre-selects the size before clicking buy — so reach for the BOTH-marking only when the version/flow actually needs it (Case B/C).
 
 ### `data-qa-cart-count` (optional, best-effort)
 The cart item-count badge near `data-qa-cart-icon`. The engine reads it to assert the count incremented after add-to-cart. Mark the element whose text is the count (e.g. the badge `<span>`). If the badge only renders once `count > 0` and hydrates after the add, the engine may still log "cart count not verified" — that's non-fatal (the step passes without it).
@@ -156,6 +164,7 @@ If no visible element matches, the engine falls back to the first DOM match (so 
 After Phase 3 of the skill, verify before opening the PR:
 
 - [ ] At least one of: `data-qa-category-link`, `data-qa-search-input` exists.
+- [ ] The **FIRST `data-qa-category-link` in DOM order** lands on a real PLP (verify via `qa doctor` on its target, or `curl <url>/ | grep -oE '<a[^>]*data-qa-category-link[^>]*>'`) — guards against the generic-nav over-marking pitfall. See `references/category-link-disambiguation.md`.
 - [ ] If `data-qa-category-link` is drawer-gated (mobile-first header), `data-qa-menu-trigger` is marked.
 - [ ] If a blocking popup (newsletter / cookie-consent / age-gate) appears before a product is reached, `data-qa-dismiss` marks its close (✕) control.
 - [ ] `data-qa-product-card` exists (multiple OK).

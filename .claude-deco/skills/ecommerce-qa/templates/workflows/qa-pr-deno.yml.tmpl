@@ -19,6 +19,15 @@ concurrency:
   group: qa-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
+# Declared explicitly: a restricted permissions block drops every scope not listed,
+# including the default `contents: read` — without it actions/checkout fails with
+# "repository not found" (git exit 128). Keep `contents: read` plus the scopes this
+# job actually needs.
+permissions:
+  contents: read       # actions/checkout
+  pull-requests: read  # github-script reads the PR preview comments
+  checks: write        # dorny/test-reporter publishes the check run
+
 jobs:
   e2e:
     name: Purchase journey
