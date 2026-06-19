@@ -83,7 +83,7 @@ Some B2B stores require login before reaching `/checkout`. Default journey fails
 
 **Handling:**
 - Phase 1 should detect login-gated checkout (look for `Login` or `Sign in` components in checkout route).
-- If detected, the skill must NOT install the PR workflow until auth flow is solved. Surface to user: "This store requires login before checkout. The journey can't complete without authentication. Add a test user to `.qarc.json` and consult engine docs on auth setup."
+- If detected, do NOT drop the `.qarc.json` opt-in until the auth flow is solved — otherwise the control-plane will run a journey that can't complete and post a red Check Run. Surface to user: "This store requires login before checkout. The journey can't complete without authentication. Add a test user to `.qarc.json` and consult engine docs on auth setup."
 
 ## Pattern 5 — CEP required to even add to cart
 

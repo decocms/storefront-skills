@@ -20,24 +20,13 @@ In Phase 1, check for signals of existing test frameworks:
 
 If any are present, the skill records them in the Phase 2 mapping table and prints a note:
 
-> Detected existing test framework: Cypress. The skill will add `@decocms/qa` alongside it — your existing tests are untouched. The new `qa:local` and `qa:smoke` scripts do not conflict with Cypress's `cypress:open` / `cypress:run`.
+> Detected existing test framework: Cypress. The skill will add `@decocms/qa` alongside it — your existing tests are untouched. The new `qa:local` script does not conflict with Cypress's `cypress:open` / `cypress:run`.
 
 ## Naming conflicts
 
-Scripts the skill adds:
+The only script the skill adds is `qa:local` (a local-debug convenience). Conflict is rare — most projects use `test:*` or `cypress:*` for similar purposes. If the repo already has `qa:local` for something else, the skill renames its script to `deco-qa:local` and updates the README accordingly.
 
-| Script | Conflict? |
-|---|---|
-| `qa:local` | Rare. Most projects use `test:*` or `cypress:*` for similar purposes. |
-| `qa:smoke` | Rare. |
-
-If a conflict exists (the repo already has `qa:local` for something else), the skill renames its scripts to `deco-qa:local` and `deco-qa:smoke` and updates the workflow templates and README accordingly.
-
-## Workflow conflicts
-
-`.github/workflows/qa-pr.yml` and `qa-main.yml` are unique names — extremely unlikely to clash. If they do, the skill renames to `deco-qa-pr.yml` and `deco-qa-main.yml`.
-
-The skill never deletes or modifies existing workflow files.
+There are no CI workflow files to conflict over — the journey runs on the deco control-plane (see SKILL.md → **Where it runs**), not via a workflow committed to the store.
 
 ## Overlap with an existing purchase-journey suite — coexist, but flag it
 
