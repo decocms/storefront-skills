@@ -1,15 +1,19 @@
 ---
 name: deco-ecommerce-qa
-description: Use when inside a deco.cx ecommerce repository (deco.ts present, decobot in PR history) and the user wants automated QA for purchase-journey correctness — set up E2E coverage, test the add-to-cart / checkout flow, or scaffold a CI gate for the store with the @decocms/qa engine. NOT for load/cache performance testing (use deco-e2e-testing) or hand-written Playwright spec files.
+description: Use when inside a deco.cx ecommerce repository (deco.ts present, decobot in PR history) and the user wants automated QA for purchase-journey correctness — set up E2E coverage of the add-to-cart / checkout flow by marking data-qa-* attributes and dropping the .qarc.json opt-in. The store runs no CI workflow of its own: the deco control-plane runs the journey on PR previews and reports a GitHub Check Run. NOT for load/cache performance testing (use deco-e2e-testing) or hand-written Playwright spec files.
 ---
 
 # Setup deco.cx Ecommerce QA
 
 ## Overview
 
-Installs E2E coverage of the purchase journey (home → PLP → PDP → cart → `/checkout`) in a deco.cx ecommerce repo, opens a PR. Strategy: mark critical JSX elements with `data-qa-*` boolean attributes (standardized across 200+ stores), generate engine config + GitHub Actions workflow that runs on PR previews (decobot) and main.
+Installs E2E coverage of the purchase journey (home → PLP → PDP → cart → `/checkout`) in a deco.cx ecommerce repo, opens a PR. Strategy: mark critical JSX elements with `data-qa-*` boolean attributes (standardized across 200+ stores) and drop a `.qarc.json` at the repo root — that file is the **opt-in** that turns QA on for the store.
 
-**Core principle: do NOT probe selectors at runtime.** Selectors are deterministic because the JSX is the source of truth. If a `data-qa-*` attribute is missing, the CI fails — that IS the contract.
+**Core principle: do NOT probe selectors at runtime.** Selectors are deterministic because the JSX is the source of truth. If a `data-qa-*` attribute is missing, the journey fails — that IS the contract.
+
+### Where it runs
+
+The store does **not** maintain a CI workflow for this. The **deco control-plane (admin)** orchestrates the run: when a PR preview environment comes up, the admin fires a **k8s Job** with the `qa-runner` image (Playwright + Bun, built in the `@decocms/qa` repo), which runs `bunx @decocms/qa journey` against the preview URL and **posts the result as a GitHub Check Run** on the PR. It's **fire-and-forget** (does not block the deploy). The single per-store signal is the committed `.qarc.json`: no `.qarc.json` → the admin runs nothing. Background: `docs/como-funciona-o-qa.md` in the `@decocms/qa` repo, section *"Onde isso roda (na prática)"* (`deco-sites/admin#3269`).
 
 ## Execution modes
 
@@ -28,12 +32,12 @@ If `QA_SETUP_MODE` is unset or any value other than `headless`, run in `interact
 ## When NOT to use
 
 - Repo is not a deco.cx ecommerce (Shopify Hydrogen, standalone Next.js, marketing site).
-- Engine package `@decocms/qa` is not published / unreachable — verify with `npm view @decocms/qa version` before starting. Capture that version and **pin it exactly** in every CI path: the verdict must stay reproducible and attributable to *store* changes, never to engine drift (a journey is a regression signal only if red ⟺ the store broke). `@latest` is reserved for local debugging (`qa:local`). See **Engine version pinning** below.
+- Engine package `@decocms/qa` is not published / unreachable — verify with `npm view @decocms/qa version` before starting. The skill itself uses `@latest` everywhere (`list-slugs`, `doctor`, `qa:local`): the slug contract is backward-compatible (the list only grows), so instrumenting against `@latest` is safe. Determinism of the *verdict* is the control-plane runner's concern — it pins the exact engine version it runs; the store repo carries no pinned dependency for QA.
 - User explicitly asks for Playwright `*.spec.ts` files instead of the engine-driven setup.
 
 ## Canonical data-qa attributes
 
-> **The slug list is owned by the engine and grows between versions. ALWAYS run `npx @decocms/qa@{{ENGINE_VERSION}} list-slugs` (or `deno run -A npm:@decocms/qa@{{ENGINE_VERSION}} list-slugs`) at the start of Phase 2 and treat its output as authoritative** — do not trust this table or your memory. The list below is a snapshot and may lag the engine. `qa doctor --url <URL>` reports which slugs are present on a given page.
+> **The slug list is owned by the engine and grows between versions. ALWAYS run `npx @decocms/qa@latest list-slugs` (or `deno run -A npm:@decocms/qa@latest list-slugs`) at the start of Phase 2 and treat its output as authoritative** — do not trust this table or your memory. The list below is a snapshot and may lag the engine. `qa doctor --url <URL>` reports which slugs are present on a given page.
 
 Snapshot of the canonical slugs (verify with `list-slugs`):
 
@@ -75,25 +79,21 @@ Execute in order. Each phase is idempotent — running the skill twice on the sa
 
 **Idempotency pre-check (runs first, in BOTH modes).** Before any other work, short-circuit if the repo is already set up or a setup PR is already open — never duplicate.
 
-- **Already set up? → full no-op.** True when `.qarc.json` exists **and** parses as valid (has `url`, `cep`, `viewports`, `selectors`, `features`) **AND** at least one of: a `.github/workflows/qa-*.yml` workflow exists, or `@decocms/qa` is listed as a dependency in `package.json`/`deno.json`. If fully set up → **exit without opening a PR**, logging what was found (config path + workflow/dep). Do nothing else.
-  - **Partial setup keeps AUGMENT mode** (the existing behavior): `.qarc.json` present but **no** workflow and **no** `@decocms/qa` dep → not "fully set up". Continue into Phases 1–3 to fill `data-qa` gaps and **skip Phase 4** (see Phase 4). This is the same AUGMENT switch noted below.
+- **Already opted in? → AUGMENT, never recreate `.qarc.json`.** The store is opted in the moment a valid `.qarc.json` exists at the repo root (parses with `url`, `cep`, `viewports`, `selectors`, `features`) — that file IS the QA switch. When it's present, do **not** rewrite it. Continue into Phases 1–3 only to fill `data-qa-*` gaps (AUGMENT mode) and **skip Phase 4** (see Phase 4). If the markers are already complete too, there's nothing left to do → **exit without opening a PR**, logging the config path.
 - **Setup PR already open? → no-op.** Run `gh pr list --label qa-setup --state open`. If any PR is returned → **stop and point the user at it**; do not create a duplicate. The **`qa-setup` label is the source of truth** for "a setup PR exists" — not the branch name, not the title (Phase 5 always applies that label).
 
 - Confirm it's a deco.cx ecommerce (not just any deco-deployed app). Need both a deco signal AND an ecommerce signal — see `references/deco-stack-detection.md`. If only deco signals are present without ecommerce shape (no `ProductCard`/`BuyButton`/checkout routes), ABORT — repo is likely internal tooling.
-- **Classify the runtime:**
-  - `deno.json` AND no `package.json` → **Pure Deno + Fresh**. Use Deno workflow templates + merge tasks into `deno.json`. See `references/deno-fresh-setup.md`.
-  - `deno.json` AND `package.json` → **Mixed**. Use default (Node/Bun) wiring via `package.json`.
-  - Only `package.json` → **Pure Node/Bun**. Default wiring.
+- **Classify the runtime** (only matters for where the `qa:local` convenience lives — there is no workflow to pick):
+  - `deno.json` AND no `package.json` → **Pure Deno + Fresh**. `qa:local` is a task in `deno.json`. See `references/deno-fresh-setup.md`.
+  - `deno.json` AND `package.json` → **Mixed**, or only `package.json` → **Pure Node/Bun**. `qa:local` is a `package.json` script + `scripts/qa-local.sh`.
 - **Detect existing test frameworks** (Cypress, Playwright, Vitest, Jest): leave them alone — the skill adds `@decocms/qa` alongside. See `references/coexistence-with-existing-tests.md`.
 - Detect package manager from lockfile (`bun.lock` / `pnpm-lock.yaml` / `package-lock.json` / `deno.lock`).
-- **Capture the engine version to pin:** `npm view @decocms/qa version`. This is the value for `{{ENGINE_VERSION}}` in every template (workflows, deno tasks, the `package.json` devDep). See **Engine version pinning** at the end of Phase 4.
-- Detect production URL from `wrangler.toml`/README/env files. If unclear, ask the user via `AskUserQuestion`. **(headless)** No `AskUserQuestion` — rely on auto-detection from `wrangler.toml`/README/env; if the prod URL is still indetectable, **abort with a clear error** ("headless QA setup: could not auto-detect prod URL; re-run interactively or set `.qarc.json` `url`") rather than guessing.
-- Check if `.qarc.json` already exists. If yes, switch to AUGMENT mode (skip Phase 4 workflow generation). (See the idempotency pre-check above for the full-setup no-op vs. partial-setup AUGMENT distinction.)
-- Check past PRs for deco preview bots (`decobot`/`deco-bot`/`decocms-bot`). If none found in last 10 PRs, the repo may not have automatic previews — ask the user whether to install the PR workflow or only `qa-main.yml`. **(headless)** No `AskUserQuestion` — default to installing **only `qa-main.yml`** (skip the PR-preview workflow) and **record that choice in the PR body** so the reviewer can opt back into the PR workflow.
+- Detect production URL from `wrangler.toml`/README/env files (it goes into `.qarc.json` `url`). If unclear, ask the user via `AskUserQuestion`. **(headless)** No `AskUserQuestion` — rely on auto-detection from `wrangler.toml`/README/env; if the prod URL is still indetectable, **abort with a clear error** ("headless QA setup: could not auto-detect prod URL; re-run interactively or set `.qarc.json` `url`") rather than guessing.
+- Check if `.qarc.json` already exists. If yes, switch to AUGMENT mode (skip Phase 4). (See the idempotency pre-check above.)
 
 ### Phase 2 — Locate target elements
 
-**First, fetch the authoritative slug list:** run `deno run -A npm:@decocms/qa@{{ENGINE_VERSION}} list-slugs` (or `npx @decocms/qa@{{ENGINE_VERSION}} list-slugs`) — the **same version you pinned in Phase 1**, so you map against exactly what CI will run. Map against THAT list, not from memory — slug names and counts change between engine versions (e.g. variant handling is `data-qa-variant-option` / `data-qa-variant-confirm`, not the older guess `data-qa-pdp-variants`).
+**First, fetch the authoritative slug list:** run `deno run -A npm:@decocms/qa@latest list-slugs` (or `npx @decocms/qa@latest list-slugs`). Map against THAT list, not from memory — slug names and counts change between engine versions (e.g. variant handling is `data-qa-variant-option` / `data-qa-variant-confirm`, not the older guess `data-qa-pdp-variants`). The contract is backward-compatible (slugs only get added), so `@latest` is safe to instrument against.
 
 For each canonical attribute, find candidate JSX in the codebase:
 
@@ -127,39 +127,27 @@ Use Edit (not Write) for surgical changes. Preserve indentation, existing props,
 
 Do NOT batch edits via Write — every change must be a targeted Edit with surrounding context preserved.
 
-### Phase 4 — Scaffold config + workflows
+### Phase 4 — Scaffold the `.qarc.json` opt-in
 
-Skip this phase entirely in AUGMENT mode. Pick template variants based on the runtime classification from Phase 1.
+Skip this phase entirely in AUGMENT mode (a valid `.qarc.json` already exists — don't recreate it).
+
+**The deliverable here is the `.qarc.json` — that file IS how the store opts into QA.** There is **no GitHub Actions workflow to scaffold**: the deco control-plane runs the journey on PR previews and posts a Check Run (see **Where it runs** in the Overview). Everything else below is a small local-debug convenience.
 
 **Common to all runtimes:**
-- `.qarc.json` (root): URL, CEP (`01310-100` default), viewports `["desktop","mobile"]`, empty `selectors` and `features` (see `references/checkout-quirks.md` for when to populate `features.checkoutUrlPattern` / `checkoutCrossOrigin`).
-- **`.qarc.json` is only read if the repo is checked out (it loads from `process.cwd()`).** The engine reads config from `join(process.cwd(), ".qarc.json")`. **Without an `actions/checkout` step the file does not exist on the runner**, so ALL config (`features.checkoutUrlPattern`, `viewports`, `selectors`) is **silently ignored** — the journey runs with only `--url` + defaults. The shipped templates already check out the repo; this warning matters for anyone writing a simplified **manual** workflow. Typical symptom: `data-qa-checkout-page missing` even though you set `checkoutUrlPattern`. (See `references/decobot-preview-parsing.md`.)
+- `.qarc.json` (root, from `templates/qarc.json.tmpl`): `url` (prod URL from Phase 1 — used as the fallback target when there's no preview), `cep` (`01310-100` default), `viewports` `["desktop","mobile"]`, empty `selectors` and `features`. Populate `features.checkoutUrlPattern` / `checkoutCrossOrigin` per `references/checkout-quirks.md` when the store's checkout is VTEX/cross-origin.
 - `.gitignore`: append `qa-output/`.
-- **Previews behind Cloudflare (engine ≥ 0.5.0).** The PR workflow runs against the decobot `*.decocdn.com` preview, which is fronted by Cloudflare Bot Management — a CI datacenter-IP headless Chromium gets a `403`/challenge instead of the store. The engine (≥ 0.5.0) tags its User-Agent with a `deco-qa-bot/1.0` token so a **one-time** zone WAF carve-out can let the QA bot through without weakening protection for real users. Set it once at the Cloudflare zone (works for every deco store); see `references/cloudflare-bot-allowlist.md`. If you can't touch the zone, use a `workflow_dispatch.url` override or the Deno local-boot fallback below.
-- **Waiting for the prod deploy on main.** A push to `main` only *triggers* deco's prod build/deploy, which runs asynchronously **off** GitHub Actions (minutes) — it is NOT a workflow or check-run, so there's nothing to `needs:`. If QA-main fires on `push` and hits prod immediately, it races the deploy and tests the *previous* version → false `data-qa-*`-missing failures. The fix (baked into both `qa-main.yml` templates): a `Wait for deco prod deploy` step polls the deco **commit status** `Deco / <site> / prod` (legacy status API) via `getCombinedStatusForRef` until it flips `pending → success`, then runs the journey; it fails fast on `failure`/`error` (with the build-logs link) and times out after 20 min. Gated on `github.event_name == 'push'` so `workflow_dispatch` overrides skip the wait. The context carries the per-store slug, so it's matched by pattern `/^Deco \/ .+ \/ prod$/` (site-agnostic). This mirrors the PR workflow's `Wait for deco preview`. See `references/decobot-preview-parsing.md`.
 
-**Pure Node/Bun (or Mixed):**
-- `.github/workflows/qa-pr.yml` (from `templates/workflows/qa-pr.yml.tmpl`): triggers on `pull_request` + `workflow_dispatch` (manual URL fallback). Polls for deco preview comment (handles multiple bot logins + marker styles — see `references/decobot-preview-parsing.md`), runs `bunx @decocms/qa@{{ENGINE_VERSION}} journey --url $PREVIEW_URL --junit junit.xml --github`.
-- `.github/workflows/qa-main.yml` (from `templates/workflows/qa-main.yml.tmpl`): triggers on push to `main` + `workflow_dispatch`. **Waits for the deco prod deploy** (polls the `Deco / <site> / prod` commit status until `success`) before running the engine against the prod URL — see "Waiting for the prod deploy on main" below.
-- `scripts/qa-local.sh`: `bunx @decocms/qa journey --url ${1:-http://localhost:8000} --headed --debug`.
-- `package.json`: add `@decocms/qa` as a devDep **pinned to the exact `{{ENGINE_VERSION}}`** (not `latest` / `^`) + scripts `qa:local`, `qa:smoke`. Commit the lockfile so CI installs that exact build.
+**Local-debug convenience (`qa:local`) — optional but recommended.** Runs the journey headed against a local boot for debugging. Uses `@latest` (reproducibility doesn't matter for local debug; the control-plane runner owns verdict determinism). **No** pinned devDep and **no** committed lockfile for QA — the runner installs the engine itself; nothing in the store repo needs `@decocms/qa` as a dependency.
+- **Pure Node/Bun (or Mixed):** add `scripts/qa-local.sh` (`bunx @decocms/qa@latest journey --url ${1:-http://localhost:8000} --headed --debug`) and a `qa:local` script in `package.json`.
+- **Pure Deno + Fresh:** merge the `qa:local` task from `templates/deno-tasks.json.tmpl` into `deno.json` (hardcodes `--url http://localhost:8000`; see `references/deno-fresh-setup.md` for the `deno task` arg-forwarding gotcha). Do NOT create `package.json` or `scripts/qa-local.sh`.
 
-**Pure Deno + Fresh:**
-- `.github/workflows/qa-pr.yml` (from `templates/workflows/qa-pr-deno.yml.tmpl`) and `.github/workflows/qa-main.yml` (from `qa-main-deno.yml.tmpl`). Same **preview-link** strategy as Node/Bun, but with Deno: `denoland/setup-deno@v2.x`, poll the decobot comment for the `*.decocdn.com` preview (secure bot-only filter — see `references/decobot-preview-parsing.md`), then `deno task qa:run --url "$TARGET_URL"`. The main workflow also **waits for the prod deploy commit status** before running (see "Waiting for the prod deploy on main" above). The Playwright step derives the engine's chromium revision from the pinned version (`npm view @decocms/qa@{{ENGINE_VERSION}} dependencies.playwright`). **`{{ENGINE_VERSION}}` (from Phase 1) is the only placeholder to fill — otherwise site-agnostic.** `workflow_dispatch.url` overrides to hit any reachable URL (e.g. prod smoke).
-  - **Requires engine ≥ 0.5.0 + the Cloudflare carve-out** (see the "Previews behind Cloudflare" note above). Without the `deco-qa-bot` allowlist the preview 403s the CI runner.
-  - **Fallback when you can't add the Cloudflare carve-out** (no zone access): build & boot the storefront in CI (`deno task build` → `deno task preview` → `--url http://localhost:8000`) instead of polling the preview. Slower (cold deco builds re-fetch the module graph — pre-warm with `deno cache`) and needs the decofile committed at `.deco/blocks/`. See `references/ci-local-boot.md` for that workflow variant.
-- `deno.json`: merge in tasks from `templates/deno-tasks.json.tmpl` (`qa:local`, `qa:smoke`, `qa:run`). `qa:run` / `qa:smoke` pin `npm:@decocms/qa@{{ENGINE_VERSION}}`; only `qa:local` keeps `@latest` (local debug). Commit `deno.lock`. `qa:run` may carry `--timeout 20000` as headroom.
-- Do NOT create `package.json`. Do NOT create `scripts/qa-local.sh` (tasks live in `deno.json`).
-
-**If pre-existing scripts `qa:local`/`qa:smoke` conflict:** rename the skill's to `deco-qa:local`/`deco-qa:smoke` and update workflows accordingly. See `references/coexistence-with-existing-tests.md`.
-
-**Engine version pinning (deterministic CI).** The journey verdict must be reproducible and attributable to *store* changes — never to engine drift. So every CI/verdict path pins the **exact** `{{ENGINE_VERSION}}` captured in Phase 1: the workflow `journey` commands, `qa:run`/`qa:smoke`, and the `package.json` devDep + committed lockfile (`deno.lock` for Deno). `@latest` is reserved for `qa:local`, where reproducibility doesn't matter and you want the newest build to debug against. **Bump deliberately, never automatically:** to adopt a newer engine, open a PR that bumps `{{ENGINE_VERSION}}` in the workflows + `package.json`/`deno.json` — the QA journey *is* that PR's gate, so you adopt the new engine only if the store stays green. A tool whose whole value is determinism cannot let a silent `@latest` release flip a store's verdict with no store-side change. (No Renovate/Dependabot — the bump is a human decision.)
+**If a pre-existing `qa:local` script conflicts:** rename the skill's to `deco-qa:local`. See `references/coexistence-with-existing-tests.md`.
 
 ### Phase 5 — Open PR
 
 - Create branch `chore/setup-qa`.
 - Commit message: `chore(qa): set up E2E suite with data-qa attributes`.
-- PR body: include the Phase 2 mapping table, list of modified files, debug instructions (`bun run qa:local`), link to engine docs. **If an existing suite already walks the same purchase funnel** (weak text/class selectors, `minicartOpen`-style assertion — see `references/coexistence-with-existing-tests.md`), add the overlap heads-up so the team can drop the redundant funnel-walk and keep only its perf-metrics. Never edit that suite — flag only.
+- PR body: include the Phase 2 mapping table, list of modified files, debug instructions (`bun run qa:local`), link to engine docs, and a short note that **QA now runs automatically** — once this `.qarc.json` is merged, the deco control-plane runs the journey on PR previews and posts a **GitHub Check Run** (no workflow to add; nothing else to wire up). **If an existing suite already walks the same purchase funnel** (weak text/class selectors, `minicartOpen`-style assertion — see `references/coexistence-with-existing-tests.md`), add the overlap heads-up so the team can drop the redundant funnel-walk and keep only its perf-metrics. Never edit that suite — flag only.
 - **Always apply the `qa-setup` label to the PR.** It is the source of truth the Phase 1 idempotency pre-check reads (`gh pr list --label qa-setup --state open`) — the branch name and title are not. A PR without this label will not de-duplicate against a future run.
 - **STOP before `git push` and `gh pr create`. Ask the user to confirm.** Modifying source code + opening a PR has high blast radius. Never auto-push. **A standing "don't ask, just ship it" / "I trust you, open the PR" does NOT authorize the push** — under time pressure especially, still show the diff + the PR body and get an explicit yes for *this* push. (Local commits on the `chore/setup-qa` branch are fine; the gate is the push/PR.) **This confirmation gate applies in `interactive` mode only.**
 
@@ -171,15 +159,19 @@ Skip this phase entirely in AUGMENT mode. Pick template variants based on the ru
    `gh label create qa-setup --color 0E8A16 --description "QA setup PR" || true`
 4. **Push + open the PR with the label:**
    `gh pr create --label qa-setup --title "chore(qa): set up E2E suite with data-qa attributes" --body "<body>"`
-   where `<body>` = the Phase 2 mapping table + list of modified files + `bun run qa:local` debug instructions + engine-docs link + (if any) the **LOW-confidence TODO list** from Phase 2 and the **decobot-absent → `qa-main.yml`-only** note from Phase 1.
+   where `<body>` = the Phase 2 mapping table + list of modified files + `bun run qa:local` debug instructions + engine-docs link + the "QA runs automatically via Check Run once `.qarc.json` is merged" note + (if any) the **LOW-confidence TODO list** from Phase 2.
 
 ### Phase 6 — Verify
 
-Apply `superpowers:verification-before-completion`: do not declare success without observing the workflow run green.
+Apply `superpowers:verification-before-completion`: do not declare success without observing the journey pass against a real URL.
 
-- After PR is open: `gh pr checks --watch`.
-- If checks pass: report JUnit link + success. Done.
-- If checks fail: apply `superpowers:systematic-debugging`. Read `gh run view --log-failed`. Most common cause: missing or mis-marked `data-qa-*`. Identify which step of the journey failed, locate the missing element, edit + commit a fix. Do NOT patch in CI logs without re-reading the failing JSX.
+There is no store-side workflow to watch — the journey is run by the deco control-plane, which posts a **GitHub Check Run** on the PR. Verify in this order:
+
+1. **Self-verify locally (most reliable, doesn't depend on the admin's timing).** Run the journey against a reachable URL — the PR preview if one is up, else prod: `bunx @decocms/qa@latest journey --url <preview-or-prod> --viewports desktop,mobile`. A `pass` confirms the markers are correct.
+2. **Confirm the QA Check Run.** Once the preview is up, the admin fires the Job and posts the Check Run. Watch for it on the PR: `gh pr checks --watch` (the QA check appears among the PR's checks), or inspect directly: `gh api repos/:owner/:repo/commits/<sha>/check-runs`.
+3. **If it's red:** apply `superpowers:systematic-debugging`. Read the journey output / Check Run summary (and the `report.json` it links). Most common cause: missing or mis-marked `data-qa-*`. Identify which step failed, locate the element, edit + commit a fix — re-read the failing JSX, don't patch blindly from logs.
+
+> If no preview ever comes up and the Check Run never appears, the store may not have automatic PR previews — that's a platform/admin concern, not something the store repo fixes. Self-verify against prod (step 1) and flag it in the PR.
 
 ## Common mistakes
 
@@ -192,15 +184,12 @@ Apply `superpowers:verification-before-completion`: do not declare success witho
   - **Engine ≥ 0.5 (the common case):** the buy step **pre-selects the variant first** — it finds `data-qa-variant-option`, clicks an in-stock size, and only then clicks an already-enabled `data-qa-buy-button`. Marking the size options (in-stock only, every render branch) is **sufficient**; `data-qa-variant-confirm` is **not** required here.
   - **Older click-buy-first order (and genuine modal "confirm" flows):** the engine clicked `data-qa-buy-button` first, while still disabled → no-op → never re-clicked. There, mark the buy button with BOTH `data-qa-buy-button` and `data-qa-variant-confirm` (it doubles as the post-variant confirm). Don't misdiagnose the empty cart as a VTEX/localhost issue — it adds to cart fine locally once variant-confirm is set. *(Learning: Osklen.)*
   - See `data-qa-conventions.md` for the version-tagged step order and `references/checkout-quirks.md` Pattern 6.
-- **Assuming a green journey means the cart actually filled.** Historically the journey asserted *clicks*, NOT *cart state* — so an emptied/wrong-quantity/wrong-price cart passed green. The pinned engine (≥ 0.5.x) asserts cart state natively: mark the cart-state slugs (`data-qa-minicart-item*` etc.) and the journey fails the verdict on a broken cart. No companion scripts — just the markers (see `references/cart-state-gates.md`).
+- **Assuming a green journey means the cart actually filled.** Historically the journey asserted *clicks*, NOT *cart state* — so an emptied/wrong-quantity/wrong-price cart passed green. The current engine (≥ 0.5.x) asserts cart state natively: mark the cart-state slugs (`data-qa-minicart-item*` etc.) and the journey fails the verdict on a broken cart. No companion scripts — just the markers (see `references/cart-state-gates.md`).
 - **Editing the wrong add-to-cart file (dead code).** Before assuming a file matters, grep for imports and trace what `data-qa-buy-button` actually executes. A `sdk/useAddToCart.ts` is often dead code; the real path is usually a local hook in `AddToCartButton/common.tsx` whose `onAddItem` comes from a platform wrapper (`AddToCartButton/vtex.tsx`) where the real `useCart().addItems({ quantity })` lives. A "break" in the dead file is a no-op — and proves nothing about the tests.
 - **Two-level mobile drawer.** If the mobile drawer's top-level items open submenus instead of linking to PLPs, step 2 can't find a category link (engine opens only one level) — scope `.qarc.json` to `"viewports": ["desktop"]`.
 - **Wrong checkout mode.** Run `curl -sL -o /dev/null -w '%{url_effective} %{num_redirects}' STORE.com/checkout` first: same-origin (0 redirects, VTEX served at `/checkout`) → the store has **no DOM of its own to mark**, so the clean default is `features.checkoutUrlPattern: "**/checkout**"` (don't try to mark a marker that isn't yours); a `selectors["data-qa-checkout-page"]="#checkoutMainContainer"` is the documented alternative when you'd rather assert VTEX's stable DOM hook. Cross-origin redirect → `features.checkoutCrossOrigin: true`. (See `checkout-quirks.md` Pattern 2.) Note: a `/checkout?orderFormId=test` returning 403 *outside* the journey is normal (no session/orderForm) — inside the journey, with a real cart, the URL matches the pattern.
-- **A restricted `permissions:` block silently breaks `actions/checkout`.** GitHub Actions grants full default scopes only when *no* `permissions:` block exists; declaring one drops every scope not listed. So a block like `permissions: { pull-requests: read }` removes the default `contents: read` and checkout fails with `repository not found` (git exit 128). Always declare `contents: read` plus the scopes each job actually needs (PR workflow: `pull-requests: read` for comment polling + `checks: write` for the test report; main workflow: `statuses: read` for the prod-status poll + `checks: write`). The shipped templates already declare these.
-- **Preview returns 403 / bot-challenge in CI.** If the deco preview (or prod) sits behind Cloudflare Bot Management, the journey from a CI-runner IP gets an interstitial/403 instead of the store. Fix (default): engine ≥ 0.5.0 sends a `deco-qa-bot/1.0` User-Agent token — add a **one-time** Cloudflare WAF carve-out for it (`and not http.user_agent contains "deco-qa-bot"`, scoped to `*.decocdn.com`); surgical, and works for every deco store from a single zone rule. See `references/cloudflare-bot-allowlist.md`. Don't fight it with spoofed headers. No zone access? Fall back to booting the storefront in CI and testing localhost (`references/ci-local-boot.md`). *(Learning: technos — the UA carve-out; Osklen earlier used the local-boot fallback.)*
-- **QA-main racing the prod publish.** On deco, a push to `main` only *triggers* the prod build/deploy (async, off Actions, minutes). If QA-main runs the journey on `push` immediately, it tests the *previous* prod and reports a false `data-qa-*`-missing failure (the markers exist in the just-merged code but aren't live yet). The `qa-main.yml` template already gates on the deco prod **commit status** (`Deco / <site> / prod` → `success`) before running — don't strip that step. *(Learning: technos #333 — first QA-main push failed at `navigate-plp` because prod hadn't republished yet.)*
-- **Verify locally before the PR.** A warm `deno task start` + `deno task qa:run --url http://localhost:8000` reproduces the whole journey (and catches all of the above) without waiting on CI.
-- **Declaring success because the PR opened.** Phase 6 is mandatory — workflow must run green.
+- **Verify locally before the PR.** A warm `deno task start` (or `bun run dev`) + `bunx @decocms/qa@latest journey --url http://localhost:8000` reproduces the whole journey (and catches all of the above) without waiting on the control-plane run.
+- **Declaring success because the PR opened.** Phase 6 is mandatory — self-verify the journey passes (locally and/or via the control-plane Check Run) before claiming done.
 
 ## References
 
@@ -208,11 +197,8 @@ Apply `superpowers:verification-before-completion`: do not declare success witho
 - `references/category-link-disambiguation.md` — the generic-nav-component pitfall: why over-marking `data-qa-category-link` makes the engine click the wrong (first-in-DOM) link, why a `selectors` override can't fix it, and the JSX discriminator fix.
 - `references/component-detection.md` — grep patterns per slug, JSX reading heuristics.
 - `references/wrapping-external-components.md` — decide inline vs spread vs wrap.
-- `references/decobot-preview-parsing.md` — regex + polling logic for the PR comment (multiple styles).
 - `references/deco-stack-detection.md` — signals to identify a deco.cx repo + runtime classification.
-- `references/deno-fresh-setup.md` — wiring for pure Deno + Fresh repos (no `package.json`).
-- `references/cloudflare-bot-allowlist.md` — **the default fix for Cloudflare-gated previews**: the engine's `deco-qa-bot/1.0` UA token (≥ 0.5.0) + the one-time zone WAF carve-out that lets the QA bot through `*.decocdn.com`; how to diagnose, scope, and harden it.
-- `references/ci-local-boot.md` — **fallback** for when you can't add the Cloudflare carve-out: build & boot the storefront in CI (`build`+`preview` → localhost) instead of testing the gated deco preview; cold-build pre-warm + the committed-`.deco/blocks` prerequisite.
+- `references/deno-fresh-setup.md` — `qa:local` wiring for pure Deno + Fresh repos (no `package.json`).
 - `references/coexistence-with-existing-tests.md` — how to coexist with Cypress, Playwright, Vitest, Jest.
 - `references/checkout-quirks.md` — VTEX cross-domain (URL-pattern assertion), regional CEPs, variant selectors.
 - `references/cart-state-gates.md` — the cart-state markers the engine asserts natively (≥ 0.3.0), plus the dead-code-path and pt-BR price-parse gotchas.

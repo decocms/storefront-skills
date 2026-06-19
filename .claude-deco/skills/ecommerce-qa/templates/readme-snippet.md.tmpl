@@ -11,16 +11,15 @@ bun run qa:local
 # Against staging or a specific URL
 ./scripts/qa-local.sh https://staging.example.com
 
-# Headless smoke run
-bun run qa:smoke
+# Fast smoke run (no checkout)
+bunx @decocms/qa@latest journey --url http://localhost:8000 --smoke
 ```
 
-The local run opens a real browser and pauses at each step so you can inspect the page. Useful when a CI run fails and you want to reproduce.
+The local run opens a real browser and pauses at each step so you can inspect the page. Useful when the automated run fails and you want to reproduce.
 
-### In CI
+### Automated (no workflow to maintain)
 
-- **PRs:** [`.github/workflows/qa-pr.yml`](./.github/workflows/qa-pr.yml) waits for the decobot preview comment, extracts the URL, and runs the journey against it. Result appears as a check named "Purchase journey".
-- **main:** [`.github/workflows/qa-main.yml`](./.github/workflows/qa-main.yml) runs the journey against the production URL on every push to `main` and on manual dispatch.
+This store does **not** maintain a CI workflow for QA. The presence of [`.qarc.json`](./.qarc.json) is the opt-in: the deco control-plane runs the purchase journey on PR previews and posts the result as a **GitHub Check Run** on the PR. It's fire-and-forget — it reports, it doesn't block the deploy. To make a QA failure block merges, require that check in the branch's protection rules.
 
 ### Adding coverage
 
@@ -31,9 +30,8 @@ The journey relies on `data-qa-*` attributes in the JSX. The canonical slugs are
 
 ### Debugging a failed run
 
-1. Open the failed workflow in GitHub Actions.
-2. Download the `qa-output-*` artifact (contains screenshots + JSON report).
-3. Re-run locally against the same URL: `./scripts/qa-local.sh <preview-url>`.
+1. Open the QA **Check Run** on the PR — its summary links the `report.json` (per-step status + screenshots).
+2. Re-run locally against the same URL to reproduce: `./scripts/qa-local.sh <preview-url>`.
 
 ### Configuration
 
@@ -41,7 +39,7 @@ The journey relies on `data-qa-*` attributes in the JSX. The canonical slugs are
 
 | Field | Meaning |
 |---|---|
-| `url` | Production URL (used by the `main` workflow). |
+| `url` | Production URL — the fallback target when there's no PR preview. |
 | `cep` | Brazilian postal code (used for shipping calculation steps). |
 | `viewports` | Which viewports to run — `desktop`, `mobile`, `tablet`. |
 | `selectors` | Per-slug CSS selector overrides. Use sparingly — prefer marking the JSX. |

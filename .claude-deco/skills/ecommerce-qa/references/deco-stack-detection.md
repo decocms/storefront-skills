@@ -29,9 +29,9 @@ If none of these are present, the repo is likely internal tooling — abort with
 | `package.json` AND no `deno.json` | **Pure Node/Bun** → default wiring |
 | Neither (just `wrangler.toml`) | Rare — ask the user. Likely a broken setup. |
 
-The runtime classification drives which template files the skill scaffolds in Phase 4:
-- Pure Deno → `qa-pr-deno.yml.tmpl`, `qa-main-deno.yml.tmpl`, merge `deno-tasks.json.tmpl` into `deno.json`.
-- Mixed or Pure Node/Bun → `qa-pr.yml.tmpl`, `qa-main.yml.tmpl`, add scripts to `package.json`.
+The runtime classification only drives where the optional `qa:local` debug convenience lives in Phase 4 (there is no workflow to scaffold — the deco control-plane runs the journey, see SKILL.md → **Where it runs**):
+- Pure Deno → merge the `qa:local` task from `deno-tasks.json.tmpl` into `deno.json`.
+- Mixed or Pure Node/Bun → add `scripts/qa-local.sh` + a `qa:local` script to `package.json`.
 
 ## Existing test framework detection
 

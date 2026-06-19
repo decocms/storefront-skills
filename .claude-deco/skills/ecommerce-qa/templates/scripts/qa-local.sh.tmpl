@@ -9,7 +9,10 @@
 # Tips:
 #   - Add --debug to pause at each step for inspection (already enabled below).
 #   - Remove --headed to run headless (faster).
-#   - Use scripts/qa-smoke.sh (or `bun run qa:smoke`) for headless smoke runs.
+#   - Add --smoke for a fast run (no checkout): bunx @decocms/qa@latest journey --url <url> --smoke
+#
+# This is a local-debug convenience only. The real QA run happens on the deco
+# control-plane (k8s Job on PR previews) and reports a GitHub Check Run.
 
 set -euo pipefail
 
@@ -20,7 +23,7 @@ echo "  Config: .qarc.json"
 echo "  Mode: headed + debug (pauses at each step)"
 echo ""
 
-bunx @decocms/qa journey \
+bunx @decocms/qa@latest journey \
   --url "$TARGET_URL" \
   --headed \
   --debug
