@@ -23,3 +23,8 @@ Keeps storefronts fast and responsive for users and Core Web Vitals.
 - **cache** — Cache HIT rate, cache-control headers, stale-while-revalidate (SWR), and immutable assets.
 - **html-size** — Reducing HTML payload and finding elements that unnecessarily inflate page size.
 
+### 🧹 Maintenance
+Reduces repository noise, deploy times, and CMS complexity.
+
+- **block-cleanup** — Audit and remove unused `.deco` blocks: orphaned sections, legacy/test blocks, inactive A/B matchers, and corrupted JSON files. Includes an automated audit script.
+
