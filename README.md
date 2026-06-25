@@ -23,3 +23,8 @@ Keeps storefronts fast and responsive for users and Core Web Vitals.
 - **cache** — Cache HIT rate, cache-control headers, stale-while-revalidate (SWR), and immutable assets.
 - **html-size** — Reducing HTML payload and finding elements that unnecessarily inflate page size.
 
+### 🔧 Troubleshooting
+Quick fixes for isolated, one-off issues that don't fit a dedicated skill. A growing knowledge base — new entries are added as problems are discovered.
+
+- **troubleshooting** — Catalog of specific symptoms, root causes, and exact fixes (e.g. wrong HTML `lang`, Fresh config quirks, etc.).
+
