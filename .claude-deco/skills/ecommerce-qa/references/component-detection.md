@@ -32,6 +32,17 @@ Run these with Grep (case-insensitive, JSX/TSX globs). Combine results; dedupe b
 | `data-qa-cep-submit` | adjacent to CEP input: `calcular`, `Simular`, `<button.*onClick=.*shipping` |
 | `data-qa-search-input` | `<input.*type=["']search`, `SearchBar`, `searchTerm`, `<input.*placeholder=["'].*[Bb]uscar` |
 
+## Gotcha-detection patterns (Phase 2.5)
+
+Greps to *flag* the four Phase 2.5 gotchas. These are heuristics — confirm by Reading the file (see SKILL.md Phase 2.5). They have false negatives; the Phase 3.5 doctor/journey gate is the empirical backstop.
+
+| Gotcha | Patterns to grep |
+|---|---|
+| CEP auto-submit (unmounts submit on fill) | in the CEP/shipping component: `hasSendCEP`, `onChange=.*[Cc]ep`, `verifyCEP`, `setCep`, a button swapped conditionally `? .*[Cc]lear.* : .*[Ss]ubmit` |
+| Variant-gated buy (drives the variant-confirm decision) | on the PDP buy button: `disabled={!`, `disabled=.*selected`, `Selecione`, `Escolha.*tamanho`, `!sku`, `!selectedSku` |
+| Two-level mobile drawer (submenu togglers) | in the drawer/menu: `setSubmenu`, `submenu`, `openSubmenu`, a top-level `<button>` with a chevron + `onClick` and **no `href`** |
+| `minicart-items` empty-state absent | in the minicart: `items.length`, `cart.items.length ?`, `isEmpty`, `length > 0 ?` gating the list-wrapper render (wrapper must render in BOTH states) |
+
 ## Classifying the match
 
 Once you have a candidate file + line, Read enough context (5-10 lines) to determine:

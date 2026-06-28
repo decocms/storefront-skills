@@ -4,6 +4,8 @@ The deco platform posts a PR comment when a preview is ready. The bot's username
 
 > **Prerequisite: the workflow MUST check out the repo, or `.qarc.json` is ignored.** The engine loads its config from `join(process.cwd(), ".qarc.json")` — i.e. only if the file is present in the runner's working directory. **Without an `actions/checkout` step the file doesn't exist on the runner**, and the journey runs with just `--url` + built-in defaults: `features.checkoutUrlPattern`, `viewports`, and `selectors` are all **silently dropped**. The shipped templates always check out first; this bites anyone hand-writing a simplified manual workflow that skips checkout (it feels unnecessary when you "only" need a URL). Typical symptom: `data-qa-checkout-page missing` even though `checkoutUrlPattern` is set in `.qarc.json`, or viewport scoping being ignored. *(Learning: aviator.)*
 
+> **Doctor pre-step runs on the resolved URL.** Both shipped workflows run a `qa doctor --url "$TARGET_URL"` CORE-marker gate **after** this preview/target resolution and **before** the journey — same `$TARGET_URL`, passed via `env:` (never inlined into the shell). `qa doctor` always exits 0, so the step parses its output and fails fast if an entry-page CORE marker (`data-qa-category-link` / `data-qa-cart-icon`) is missing, instead of letting the journey red cryptically. See SKILL.md Phase 3.5 / Phase 4.
+
 ## Known comment styles
 
 ### Style A — Visible "Visit Preview" link (older `decobot`)

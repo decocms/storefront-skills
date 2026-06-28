@@ -13,6 +13,9 @@ bun run qa:local
 
 # Headless smoke run
 bun run qa:smoke
+
+# Report which data-qa-* markers a single page exposes (quick marker check)
+bunx @decocms/qa doctor --url http://localhost:8000
 ```
 
 The local run opens a real browser and pauses at each step so you can inspect the page. Useful when a CI run fails and you want to reproduce.
@@ -21,6 +24,8 @@ The local run opens a real browser and pauses at each step so you can inspect th
 
 - **PRs:** [`.github/workflows/qa-pr.yml`](./.github/workflows/qa-pr.yml) waits for the decobot preview comment, extracts the URL, and runs the journey against it. Result appears as a check named "Purchase journey".
 - **main:** [`.github/workflows/qa-main.yml`](./.github/workflows/qa-main.yml) runs the journey against the production URL on every push to `main` and on manual dispatch.
+
+Both workflows run a `qa doctor` **CORE-marker pre-step** before the journey: if an entry-page CORE marker (`data-qa-category-link` / `data-qa-cart-icon`) is missing on the target, the run fails immediately with the named marker instead of a cryptic mid-journey error.
 
 ### Adding coverage
 

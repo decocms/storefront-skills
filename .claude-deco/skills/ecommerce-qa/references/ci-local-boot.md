@@ -69,3 +69,18 @@ deno run -A npm:@decocms/qa@latest journey --url http://localhost:8000
 ```
 
 (`deno task start` also works locally from a laptop, but it's NOT what CI runs — build+preview is the parity path.)
+
+## Setup-time doctor gate (best-effort) — reused by Phase 3.5
+
+SKILL.md Phase 3.5 reuses this same build+boot recipe **at setup time** (before opening the PR) to run the CORE-marker gate locally:
+
+```sh
+deno cache dev.ts main.ts                       # pre-warm (see "Cold builds" above)
+DECO_SITE_NAME=<site> deno task build
+DECO_SITE_NAME=<site> deno task preview &        # serves :8000
+deno run -A npm:@decocms/qa@<pinned> doctor  --url http://localhost:8000   # homepage marker table
+deno run -A npm:@decocms/qa@<pinned> journey --url http://localhost:8000   # end-to-end CORE gate (or --smoke)
+```
+
+- **Feasibility is the same prerequisite as above:** the decofile must be committed at `.deco/blocks/` (not gitignored) and the repo buildable. If it isn't — Cloudflare-only preview, a Node/Bun repo with no local preview, or boot times out — **skip cleanly**: the setup records `doctor: deferred-to-CI (reason: …)` in the PR body, and the workflow doctor pre-step + journey become the gate.
+- `doctor` is single-page (reports the homepage markers); the journey is the end-to-end CORE check. A missing CORE marker blocks the PR (interactive) or opens a flagged draft (headless). See SKILL.md Phase 3.5.
