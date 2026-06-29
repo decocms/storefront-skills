@@ -1,32 +1,31 @@
 ---
 name: setup-blog
-description: Install and configure the Spire Blog on a deco-site storefront. Covers app registration, deco block files, page routes, and the three core blog sections (BlogPost, BlogCategories, BlogPosts).
+description: Install and configure the Blog Manager on a deco-site storefront. Covers the blog app, page routes, sections, Blog Manager MCP connection in Studio, and first-run brand context initialization.
 ---
 
-Set up the Spire Blog integration on a deco storefront. Follow every step exactly — this runs across many sites and must be consistent.
+Set up the Blog Manager integration on a deco storefront. Follow every step exactly — this runs across many sites and must be consistent.
 
 ---
 
-## Step 1 — Create app re-export files
+## Step 1 — Verify dependency version
 
-Before creating any files, verify that two dependencies meet the minimum versions:
+Before creating any files, verify that the **`apps`** dependency meets the minimum version:
 
 - **`apps`** must be at least **0.144.0**
-- **`deco`** must be at least **1.190.0**
 
-Check `deno.json` (or `import_map.json`) for the entries that resolve `apps/` and `deco/` — they typically look like:
+Check `deno.json` (or `import_map.json`) for the entry that resolves `apps/`:
 ```json
-"apps/": "https://deno.land/x/deco_apps@0.x.x/",
-"deco/": "https://deno.land/x/deco@1.x.x/"
+"apps/": "https://deno.land/x/deco_apps@0.x.x/"
 ```
-or similar specifiers pointing to `deco-cx/apps` and `deco-cx/deco`.
 
-If either version is below the required minimum, stop and tell the user:
-> "The `<dependency>` dependency is currently at `<version>`. Please update it to at least `<minimum>` before continuing — the blog app requires features introduced in that version."
+If the version is below the required minimum, stop and tell the user:
+> "The `apps` dependency is currently at `<version>`. Please update it to at least `0.144.0` before continuing — the blog requires features introduced in that version."
 
-Only proceed with the steps below once both version requirements are satisfied.
+Only proceed once the version requirement is satisfied.
 
 ---
+
+## Step 2 — Create blog app re-export file
 
 Create **`apps/deco/blog.ts`**:
 ```ts
@@ -34,45 +33,29 @@ export { default } from "apps/blog/mod.ts";
 export * from "apps/blog/mod.ts";
 ```
 
-Create **`apps/deco/spire.ts`**:
-```ts
-export { default } from "apps/spire/mod.ts";
-export * from "apps/spire/mod.ts";
-```
-
 ---
 
-## Step 2 — Register the apps as deco blocks
+## Step 3 — Register the blog app as a deco block
 
 Create **`.deco/blocks/deco-blog.json`**:
 ```json
 { "__resolveType": "site/apps/deco/blog.ts" }
 ```
 
-Create **`.deco/blocks/deco-spire.json`**:
-```json
-{
-  "__resolveType": "site/apps/deco/spire.ts",
-  "account": "<SITE_ACCOUNT>"
-}
-```
-
-> **Before creating this file, ask the user:** "What is the Spire account name for this site?" — wait for the answer, then use it as the `"account"` value. Do not proceed with a placeholder.
-
 ---
 
-## Step 3 — Find the correct Header and Footer names
+## Step 4 — Find the correct Header and Footer names
 
 The Header and Footer `__resolveType` values vary per site — **do not assume `"Global Header"` and `"Global Footer"`**.
 
 Before creating the page files, inspect the site's homepage block to find the exact names in use:
 1. Read `.deco/blocks/pages-home.json` (or whichever file contains the `/` route).
 2. Find the Lazy sections that wrap the Header and Footer — copy their `__resolveType` values exactly.
-3. Use those values in Steps 3 and 4 below wherever `"Global Header"` and `"Global Footer"` appear.
+3. Use those values in Steps 5 and 6 below wherever `"Global Header"` and `"Global Footer"` appear.
 
 ---
 
-## Step 3 — Create the Blog Listing page
+## Step 5 — Create the Blog Listing page
 
 Create **`.deco/blocks/pages-Blog-listing.json`**:
 ```json
@@ -100,7 +83,7 @@ Create **`.deco/blocks/pages-Blog-listing.json`**:
       "posts": {
         "count": 100,
         "page": 1,
-        "__resolveType": "spire/loaders/BlogpostList.ts"
+        "__resolveType": "blog/loaders/BlogpostList.ts"
       }
     },
     {
@@ -115,7 +98,7 @@ Create **`.deco/blocks/pages-Blog-listing.json`**:
 
 ---
 
-## Step 4 — Create the Blog Post page
+## Step 6 — Create the Blog Post page
 
 Create **`.deco/blocks/pages-blogpost.json`**:
 ```json
@@ -143,7 +126,7 @@ Create **`.deco/blocks/pages-blogpost.json`**:
     {
       "__resolveType": "site/sections/Blog/BlogPost.tsx",
       "page": {
-        "__resolveType": "spire/loaders/BlogPostPage.ts",
+        "__resolveType": "blog/loaders/BlogPostPage.ts",
         "slug": {
           "__resolveType": "website/functions/requestToParam.ts",
           "param": "slug"
@@ -160,12 +143,11 @@ Create **`.deco/blocks/pages-blogpost.json`**:
 }
 ```
 
-> The `BlogPost` section uses `spire/loaders/BlogPostPage.ts`, **not** the generic `blog/loaders/BlogPostPage.ts`.
-> SEO uses `blog/sections/Seo/SeoBlogPost.tsx` with `blog/loaders/BlogPostPage.ts` for JSON-LD — this is correct, these two can differ.
+> Both the BlogPost section and SEO use `blog/loaders/BlogPostPage.ts`. Blog Manager publishes posts directly to the blog block collection (`collections/blog/posts/{slug}`) — the loader picks them up automatically.
 
 ---
 
-## Step 5 — Create the Blog sections
+## Step 7 — Create the Blog sections
 
 These two sections must exist under `sections/Blog/`. Each site may already have them from a previous setup — check first. If they don't exist, create them based on the templates below.
 
@@ -329,7 +311,7 @@ export function LoadingFallback() {
 
 ### `sections/Blog/BlogPost.tsx`
 
-Renders the full blog post: hero, featured image, and rich content sections from Spire.
+Renders the full blog post: hero, featured image, and rich content sections.
 
 ```tsx
 import type { BlogPostPage } from "apps/blog/types.ts";
@@ -431,12 +413,12 @@ export function LoadingFallback() {
 
 ---
 
-## Step 6 — Add a Blog link to the Header navbar
+## Step 8 — Add a Blog link to the Header navbar
 
-The header block is already known from Step 3. Now add a Blog navigation link to it so users can reach `/blog` from any page.
+The header block is already known from Step 4. Now add a Blog navigation link to it so users can reach `/blog` from any page.
 
 1. **Find the header block file.**
-   - The header `__resolveType` found in Step 3 (e.g. `"Global Header"`) is the block name.
+   - The header `__resolveType` found in Step 4 (e.g. `"Global Header"`) is the block name.
    - Locate its file under `.deco/blocks/` — it is typically named something like `header.json`, `global-header.json`, or a similar slug derived from the block name.
    - If you are unsure, list `.deco/blocks/` and open the file whose `"name"` field matches the header block name.
 
@@ -456,10 +438,55 @@ The header block is already known from Step 3. Now add a Blog navigation link to
 
 ---
 
+## Step 9 — Connect Blog Manager in Studio
+
+After the storefront pages are set up, connect the Blog Manager MCP agent in Studio.
+
+1. Open **Studio → Settings → Virtual MCPs → + New**
+2. Set the MCP server URL to:
+   ```
+   https://spire-agent.infra.deco.cx/mcp
+   ```
+3. Give it a name like **"Blog Manager"** and save.
+4. Studio will discover 20 tools including `BLOG_MANAGER` — it appears as a **Pinned View** tab automatically.
+
+Then configure the Blog Manager settings (in Studio → Settings → Blog Manager):
+- **Domain** — the site's domain (e.g. `mystore.com.br`)
+- **GitHub Owner** — the org or user that owns the site's repo (e.g. `decocms`)
+- **GitHub Repo** — the repo name (e.g. `mystore`)
+- **Language** — content language (e.g. `pt-BR` or `en`)
+
+Then connect the required bindings in **Studio → Settings → Connections**:
+
+| Binding | Required | Purpose |
+|---|---|---|
+| **GitHub** | Yes | Publishes posts to `.deco/blocks/` in the site repo |
+| **Google Analytics 4** | Optional | Traffic and engagement data (ANALYTICS_REPORT) |
+| **Google Search Console** | Optional | Rankings and impressions (ANALYTICS_OPPORTUNITIES) |
+| **SemRush** | Optional | Keyword research (SEO_CONTENT_CLUSTER) |
+| **nanoBanana** | Optional | AI cover image generation (POST_CREATE) |
+
+---
+
+## Step 10 — Initialize brand context
+
+Brand context is the mandatory first step before any content generation. The agent will not create posts until context is loaded.
+
+1. In Studio, open the Blog Manager agent — the **BLOG_MANAGER** Pinned View appears as a tab.
+2. Call **BLOG_STATUS** — it reports `context.hasContext: false` and points to the Context tab.
+3. The UI redirects to the **Context** tab automatically when GitHub is connected but context is missing.
+4. Click **"Build Brand Context"** and enter the site URL — this scrapes the homepage, extracts brand identity with AI, and saves `brand/brand.md` and `brand/guardrails.md` to `.deco/blog-manager/brand/` in the site's GitHub repo.
+5. Once complete, every session automatically loads context before generating any content.
+
+> Re-run BLOG_BUILD_CONTEXT (with `force: true`) whenever there is a major brand or product category change.
+
+---
+
 ## Notes for customization
 
 - **Styles**: The section templates above use plain Tailwind. Replace class names to match the site's design system (color tokens, font utilities, spacing helpers, etc.) once sections are created.
-- **`overrideSections`**: Only add the `overrideSections` array to `deco-spire.json` when the site uses custom Spire content blocks (e.g. custom `Paragraph.tsx`, `Heading.tsx`, etc.) — leave it out by default.
 - **SEO on the listing page**: Fill in `title` and `description` in `pages-Blog-listing.json` with the correct site-specific copy.
 - **`postsPerPage`**: Defaults to `100` so all posts load client-side for filtering. Reduce this if the site has many posts and server-side pagination is preferred.
-- **`BlogpostList.ts` vs `BlogPostPage.ts`**: The listing page uses `spire/loaders/BlogpostList.ts`; the post page uses `spire/loaders/BlogPostPage.ts`. Do not swap them.
+- **Posts storage**: Blog Manager publishes posts to `.deco/blocks/collections%2Fblog%2Fposts%2F{slug}.json` in the site's repo — they appear in the blog listing automatically via `blog/loaders/BlogpostList.ts`.
+- **Library files**: Brand context lives at `.deco/blog-manager/brand/brand.md` and `.deco/blog-manager/brand/guardrails.md`. Campaign data lives at `.deco/blog-manager/campaigns/{weekId}/`.
+- **Campaign workflow**: Use CAMPAIGN_BRIEF (keyword research, operator selects keywords) → CAMPAIGN_PLAN (ranked post ideas) → POST_OUTLINE → POST_CREATE → BLOG_PUBLISH_POST for the full 2-gate approval flow.
