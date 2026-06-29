@@ -119,6 +119,31 @@ jobs:
             echo "url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
           fi
 
+      # qa doctor is single-page and ALWAYS exits 0 — it only *reports* which
+      # data-qa-* slugs are present. So parse its output and fail here when an
+      # entry-page CORE marker is missing, turning a cryptic mid-journey
+      # SelectorNotFoundError into an early, named failure. The deeper CORE markers
+      # (product-card, pdp-title, buy-button, minicart-checkout, checkout-page) are
+      # gated by the journey step below.
+      - name: Doctor — CORE marker gate
+        if: steps.target.outputs.url
+        env:
+          TARGET_URL: ${{ steps.target.outputs.url }}
+        run: |
+          out=$(bunx @decocms/qa@{{ENGINE_VERSION}} doctor --url "$TARGET_URL")
+          echo "$out"
+          missing=""
+          for slug in data-qa-category-link data-qa-cart-icon; do
+            if printf '%s\n' "$out" | grep -F " $slug " | grep -q "missing"; then
+              missing="$missing $slug"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Doctor gate: entry-page CORE marker(s) missing on $TARGET_URL —$missing. Mark them in the JSX; the journey cannot pass without them."
+            exit 1
+          fi
+          echo "Doctor gate OK — entry-page CORE markers present."
+
       - name: Run purchase journey
         if: steps.target.outputs.url
         env:

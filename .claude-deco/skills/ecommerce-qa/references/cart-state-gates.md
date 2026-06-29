@@ -26,6 +26,22 @@ platform wrapper (`AddToCartButton/vtex.tsx`) where the real
 `useCart().addItems({ quantity })` lives. A "break" applied to the dead file
 proves nothing — the cart still fills, the assertion still passes.
 
+### PR-log format (Phase 2.5 add-to-cart trace)
+
+Phase 2.5 records the resolved chain in the PR body so a reviewer sees exactly
+what `data-qa-buy-button` drives. Write it as a one-line trail, naming any dead
+file skipped:
+
+```
+data-qa-buy-button: AddToCartButton/common.tsx:18 (onAddItem)
+  → AddToCartButton/vtex.tsx:31 → useCart().addItems({ quantity })
+  (skipped: sdk/useAddToCart.ts — not imported)
+```
+
+If the chain can't be fully resolved (dynamic dispatch, a prop drilled through an
+external component), log the partial trail + "could not fully trace" rather than
+guessing.
+
 ## Gotcha: pt-BR price parsing
 
 The price assertion compares the PDP price to the cart line price, so both must

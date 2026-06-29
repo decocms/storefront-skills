@@ -29,6 +29,8 @@ VTEX checkout lives outside the deco repo, so you can't add `data-qa-checkout-pa
 curl -s -o /dev/null -w "final: %{url_effective}\nredirects: %{num_redirects}\n" -L "https://STORE.com/checkout"
 ```
 
+> **The skill automates this probe (REQ-03).** SKILL.md Phase 4 runs this `%{num_redirects}` check during `.qarc.json` scaffolding and sets `features.checkoutUrlPattern: "**/checkout**"` (0 redirects) or `features.checkoutCrossOrigin: true` (redirects) automatically, logging the choice + rationale in the PR body. The patterns below are the reference for what it sets and why.
+
 ### 2a — Same-origin checkout (VTEX *legacy* checkout — the common case)
 
 `https://STORE.com/checkout` returns 200 with **0 redirects** — the checkout renders on the storefront's own origin (e.g. `www.osklen.com.br/checkout`). The checkout DOM belongs to VTEX, **not to your deco repo**, so there's nothing of yours to mark `data-qa-checkout-page` on. Two valid options:

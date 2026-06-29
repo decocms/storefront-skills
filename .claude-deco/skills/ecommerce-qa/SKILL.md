@@ -67,6 +67,8 @@ The engine prefers the first **visible** element when multiple match. Safe to ma
 
 **Cart-state slugs (the `data-qa-pdp-price` / `data-qa-minicart-*` / `data-qa-quantity-*` block above) are asserted by the engine itself in `@decocms/qa` ≥ 0.3.0** — the journey gains `cart-persists-reload` + `cart-controls` steps and fails the verdict when the cart is empty / wrong quantity / variant / price. Just mark them; do NOT scaffold companion scripts. (The pinned 0.5.x engine prints all cart-state slugs in `list-slugs`; very old engines resolved them from config at runtime and may omit them — check the version, not just `list-slugs`.) Each cart-state assertion is gated on its marker's presence (missing marker → skipped, not failed), so mark them all to get full coverage. See `references/cart-state-gates.md` for placement plus the pt-BR price-parse and dead-code-path gotchas.
 
+**CORE markers (the doctor gate — REQ-01).** Eight slugs are the minimum viable journey and are gated at setup time (Phase 3.5) and in CI: `data-qa-category-link`, `data-qa-product-card`, `data-qa-pdp-title`, `data-qa-buy-button`, `data-qa-cart-icon`, `data-qa-minicart`, `data-qa-minicart-checkout`, `data-qa-checkout-page` (the last is satisfied by the attribute **OR** a `features.checkoutUrlPattern` / `features.checkoutCrossOrigin` flag — see Phase 4). Every other slug is optional: a missing **optional** marker just skips its step; a missing **CORE** marker fails setup. Full subsection in `references/data-qa-conventions.md`.
+
 ## Phases
 
 Execute in order. Each phase is idempotent — running the skill twice on the same repo only fills gaps, doesn't overwrite.
@@ -78,6 +80,7 @@ Execute in order. Each phase is idempotent — running the skill twice on the sa
 - **Already set up? → full no-op.** True when `.qarc.json` exists **and** parses as valid (has `url`, `cep`, `viewports`, `selectors`, `features`) **AND** at least one of: a `.github/workflows/qa-*.yml` workflow exists, or `@decocms/qa` is listed as a dependency in `package.json`/`deno.json`. If fully set up → **exit without opening a PR**, logging what was found (config path + workflow/dep). Do nothing else.
   - **Partial setup keeps AUGMENT mode** (the existing behavior): `.qarc.json` present but **no** workflow and **no** `@decocms/qa` dep → not "fully set up". Continue into Phases 1–3 to fill `data-qa` gaps and **skip Phase 4** (see Phase 4). This is the same AUGMENT switch noted below.
 - **Setup PR already open? → no-op.** Run `gh pr list --label qa-setup --state open`. If any PR is returned → **stop and point the user at it**; do not create a duplicate. The **`qa-setup` label is the source of truth** for "a setup PR exists" — not the branch name, not the title (Phase 5 always applies that label).
+  - **Exception — a doctor-failed draft is NOT a completed setup.** A PR that is a **draft also labeled `qa-doctor-failed`** (opened by a headless run whose Phase 3.5 doctor gate failed — see Phase 5) must **not** count as the de-dup target, or a re-run would no-op forever and never fix it. Query with `gh pr list --label qa-setup --state open --json number,isDraft,labels` and ignore entries that are `isDraft` **and** carry `qa-doctor-failed`; continue and update/replace that draft (or surface it for the human to fix).
 
 - Confirm it's a deco.cx ecommerce (not just any deco-deployed app). Need both a deco signal AND an ecommerce signal — see `references/deco-stack-detection.md`. If only deco signals are present without ecommerce shape (no `ProductCard`/`BuyButton`/checkout routes), ABORT — repo is likely internal tooling.
 - **Classify the runtime:**
@@ -117,6 +120,19 @@ If confidence is low for any slug (multiple plausible matches, ambiguous semanti
 - Browserless heuristic to list what you actually marked and eyeball the first href:
   `curl <preview>/ | grep -oE '<a[^>]*data-qa-category-link[^>]*>'`
 
+### Phase 2.5 — Gotcha sweep + add-to-cart path trace
+
+Before applying attributes, run a **heuristic gotcha sweep** over the Phase 2 candidates. These are agent-driven greps + Reads, **not** a static analyzer — they *flag likely* problems and steer Phase 3 marking, so they have false negatives. The empirical backstop is the Phase 3.5 doctor/journey gate. For each item, record `verdict + file:line evidence + action taken`; the results go into the PR body (REQ-02).
+
+1. **CEP auto-submit (BR stores).** Grep the CEP/shipping component (`cep`, `postalCode`, `ShippingSimulator`, `calcular frete`) and Read it: is the submit/arrow control rendered **conditionally on a "sent" signal** (e.g. `hasSendCEP ? <Clear/> : <Submit/>`, an `onChange → verifyCEP()` that flips state)? If yes, it unmounts after fill and the engine clicks a detached node → 30s timeout. **Action: leave BOTH `data-qa-cep-input` and `data-qa-cep-submit` unmarked** — shipping (journey steps 4 & 7) then skips cleanly. See `references/data-qa-conventions.md` CEP ⚠ block. *(Learning: Osklen.)*
+2. **Variant-confirm vs engine version.** Combine the pinned `{{ENGINE_VERSION}}` (Phase 1) with whether the PDP buy button is variant-gated (grep `disabled={!selected…}`, "Selecione um tamanho", disabled-until-variant). Decision: engine **≥ 0.5** → mark `data-qa-variant-option` (every render branch) and do **not** add `data-qa-variant-confirm`; engine **< 0.5** (click-buy-first) or a genuine modal confirm → mark the buy button with BOTH `data-qa-buy-button` + `data-qa-variant-confirm`. **Action: record which case + the version that drove it.** See `references/data-qa-conventions.md` Cases A/B/C. *(Learning: Osklen.)*
+3. **Two-level mobile drawer.** Grep the drawer/menu (`MenuButton`, `MobileMenu`, drawer). Are the top-level items submenu **togglers** (a `<button>`/chevron with no `href` that opens a *second* level) rather than PLP `<a href>`? The engine opens only one level → step 2 finds no visible category-link. **Action: mark a top-level leaf category link if one exists; else scope `.qarc.json` to `"viewports": ["desktop"]`** (feeds Phase 4 / REQ-03) and note why. *(Learning: Osklen.)*
+4. **`data-qa-minicart-items` dual-state.** Find the minicart component and confirm the line-list wrapper renders in BOTH the empty and filled branches (the empty-cart gate is `wrapperPresent && 0 rows`; absent on the empty state → silent no-op). **Action: if it only renders when items exist, also mark the empty-state container in Phase 3** (or leave a LOW-confidence TODO if the empty branch is ambiguous). See `references/cart-state-gates.md`.
+
+**Trace the real add-to-cart path.** Starting from the element that will carry `data-qa-buy-button`, follow its `onClick`/handler through imports to the actual `useCart().addItems(...)` call, **skipping dead code** (an unused `sdk/useAddToCart.ts` is common; the live path is often `AddToCartButton/common.tsx` → a platform wrapper `AddToCartButton/vtex.tsx`). Record the resolved chain as `file:line → file:line → …` for the PR body; if it can't be fully resolved, log the partial chain + "could not fully trace" — don't fabricate certainty. See `references/cart-state-gates.md`.
+
+**Interactive:** present these four verdicts + the traced path **together with** the Phase 2 mapping table for one combined approval. **(headless)** No approval — the verdicts + trace go straight into the PR body (the PR is the review point).
+
 ### Phase 3 — Apply data attributes
 
 Use Edit (not Write) for surgical changes. Preserve indentation, existing props, attribute order. Examples:
@@ -127,14 +143,34 @@ Use Edit (not Write) for surgical changes. Preserve indentation, existing props,
 
 Do NOT batch edits via Write — every change must be a targeted Edit with surrounding context preserved.
 
+### Phase 3.5 — Doctor CORE-marker gate (setup-time, best-effort)
+
+Goal: catch a missing/mis-placed CORE marker **now**, before opening a PR that looks green but reds in CI (REQ-01). The CORE markers are the 8 listed under **CORE markers** in "Canonical data-qa attributes" above.
+
+**`qa doctor` is a single-page reporter** — `Open the URL and report which data-qa-* slugs are present`. It prints `✓ data-qa-<slug> — count=N …` / `✗ data-qa-<slug> — missing` for the page you give it and **always exits 0** (it never fails on its own). So on the homepage it only sees the entry-page markers (`category-link`, `cart-icon`, often `minicart`); the deeper CORE markers (`product-card`, `pdp-title`, `buy-button`, `minicart-checkout`, `checkout-page`) are validated by the **journey**, which walks the flow and exits non-zero on a missing/mis-marked marker. Use both: doctor for a fast static read, the journey for the end-to-end verdict.
+
+1. **Decide local-boot feasibility** (per `references/ci-local-boot.md`): the decofile must be committed at `.deco/blocks/` (not gitignored) and the repo buildable. If infeasible — no committed decofile, Cloudflare-only preview, a Node/Bun repo with no local preview, or boot times out — **skip cleanly**: record `doctor: deferred-to-CI (reason: <…>)` for the PR body and proceed. The workflow doctor pre-step + journey are then the gate. (Holds in both modes.)
+2. **If feasible**, boot locally (pre-warm `deno cache dev.ts main.ts`, then `deno task build` → `deno task preview &`, poll `:8000`) and run:
+   - `qa doctor --url http://localhost:8000` — capture the homepage marker table for the PR body.
+   - **`qa journey --url http://localhost:8000`** — the real end-to-end CORE gate. If the full journey can't complete locally (cross-origin VTEX checkout, or a `checkoutUrlPattern` that only matches the real domain), fall back to **`qa journey --url http://localhost:8000 --smoke`** (steps 1,2,3,5 — home → PLP → PDP → add-to-cart) and note in the PR body that minicart/checkout were not exercised locally.
+   - Build a CORE-marker results table: slug → present / missing / satisfied-by-feature → where checked (doctor page or journey step).
+3. **Fail condition** — a CORE marker missing (and not feature-satisfied), or the journey reds on a CORE step:
+   - **Interactive:** STOP. Report the missing marker(s) + the offending page/step, loop back to Phase 3 to fix the JSX, and re-run this gate. **Do not proceed to Phase 5.**
+   - **(headless):** proceed to Phase 5 but open a **DRAFT PR flagged as failing** (see Phase 5) with the doctor/journey results at the top of the body — never a normal green-looking PR.
+
 ### Phase 4 — Scaffold config + workflows
 
 Skip this phase entirely in AUGMENT mode. Pick template variants based on the runtime classification from Phase 1.
 
 **Common to all runtimes:**
-- `.qarc.json` (root): URL, CEP (`01310-100` default), viewports `["desktop","mobile"]`, empty `selectors` and `features` (see `references/checkout-quirks.md` for when to populate `features.checkoutUrlPattern` / `checkoutCrossOrigin`).
+- **`.qarc.json` (root) — scaffold platform-aware, don't ship it empty (REQ-03).** Always set `url`, `cep` (`01310-100` default), and `viewports` `["desktop","mobile"]`. Then populate `features` / `viewports` from detection, **logging each choice + a one-line rationale in the PR body**:
+  - **Checkout shape — probe first:** `curl -sL -o /dev/null -w '%{url_effective} %{num_redirects}' <prod>/checkout`. Same-origin (0 redirects, e.g. VTEX served at `/checkout`) → `features.checkoutUrlPattern: "**/checkout**"` (the store has no checkout DOM of its own to mark — don't rely on a `data-qa-checkout-page` you don't own). Cross-origin redirect → `features.checkoutCrossOrigin: true`. A deco-native checkout the store *does* own → keep `data-qa-checkout-page`, leave checkout features empty. Either checkout feature satisfies the CORE `data-qa-checkout-page` for the Phase 3.5 gate. See `references/checkout-quirks.md` Pattern 2.
+  - **Blocking overlay/popup** (newsletter / cookie / age-gate / geolocation) detected in Phase 2 but with no clean ✕ to mark → `features.dismissOverlaysHeuristic: true` (prefer marking `data-qa-dismiss`; the heuristic is the documented fallback).
+  - **Two-level mobile drawer with no top-level leaf link** (Phase 2.5 gotcha 3) → `"viewports": ["desktop"]`.
+  Leave `selectors` empty unless a documented override applies (`references/checkout-quirks.md`).
 - **`.qarc.json` is only read if the repo is checked out (it loads from `process.cwd()`).** The engine reads config from `join(process.cwd(), ".qarc.json")`. **Without an `actions/checkout` step the file does not exist on the runner**, so ALL config (`features.checkoutUrlPattern`, `viewports`, `selectors`) is **silently ignored** — the journey runs with only `--url` + defaults. The shipped templates already check out the repo; this warning matters for anyone writing a simplified **manual** workflow. Typical symptom: `data-qa-checkout-page missing` even though you set `checkoutUrlPattern`. (See `references/decobot-preview-parsing.md`.)
 - `.gitignore`: append `qa-output/`.
+- **Doctor CORE-marker pre-step (REQ-01 durable gate).** All four workflow templates run `qa doctor --url "$TARGET_URL"` **before** the journey and fail fast with a precise message if an **entry-page** CORE marker (`data-qa-category-link` or `data-qa-cart-icon`) is missing on the resolved target. `qa doctor` is single-page and **always exits 0**, so the step parses its `✓ … count=N` / `✗ … — missing` output and `exit 1`s itself; the journey step still gates the deeper markers (`product-card`, `pdp-title`, `buy-button`, `minicart-checkout`, `checkout-page`). This turns the most common setup failure — a missing/mis-marked category link, which otherwise reds cryptically at journey step 2 — into an early, named failure. Don't strip this step.
 - **Previews behind Cloudflare (engine ≥ 0.5.0).** The PR workflow runs against the decobot `*.decocdn.com` preview, which is fronted by Cloudflare Bot Management — a CI datacenter-IP headless Chromium gets a `403`/challenge instead of the store. The engine (≥ 0.5.0) tags its User-Agent with a `deco-qa-bot/1.0` token so a **one-time** zone WAF carve-out can let the QA bot through without weakening protection for real users. Set it once at the Cloudflare zone (works for every deco store); see `references/cloudflare-bot-allowlist.md`. If you can't touch the zone, use a `workflow_dispatch.url` override or the Deno local-boot fallback below.
 - **Waiting for the prod deploy on main.** A push to `main` only *triggers* deco's prod build/deploy, which runs asynchronously **off** GitHub Actions (minutes) — it is NOT a workflow or check-run, so there's nothing to `needs:`. If QA-main fires on `push` and hits prod immediately, it races the deploy and tests the *previous* version → false `data-qa-*`-missing failures. The fix (baked into both `qa-main.yml` templates): a `Wait for deco prod deploy` step polls the deco **commit status** `Deco / <site> / prod` (legacy status API) via `getCombinedStatusForRef` until it flips `pending → success`, then runs the journey; it fails fast on `failure`/`error` (with the build-logs link) and times out after 20 min. Gated on `github.event_name == 'push'` so `workflow_dispatch` overrides skip the wait. The context carries the per-store slug, so it's matched by pattern `/^Deco \/ .+ \/ prod$/` (site-agnostic). This mirrors the PR workflow's `Wait for deco preview`. See `references/decobot-preview-parsing.md`.
 
@@ -160,6 +196,7 @@ Skip this phase entirely in AUGMENT mode. Pick template variants based on the ru
 - Create branch `chore/setup-qa`.
 - Commit message: `chore(qa): set up E2E suite with data-qa attributes`.
 - PR body: include the Phase 2 mapping table, list of modified files, debug instructions (`bun run qa:local`), link to engine docs. **If an existing suite already walks the same purchase funnel** (weak text/class selectors, `minicartOpen`-style assertion — see `references/coexistence-with-existing-tests.md`), add the overlap heads-up so the team can drop the redundant funnel-walk and keep only its perf-metrics. Never edit that suite — flag only.
+- **PR body — additive sections (REQ-01/02/03), in both modes.** Beyond the items above, include: (a) **Doctor CORE-marker results** — the 8-slug table from Phase 3.5, headed with its source (`setup-time local boot` vs `deferred-to-CI — local boot infeasible: <reason>`; add the `--smoke`-only caveat if minicart/checkout weren't exercised locally); (b) **Gotcha findings** — the four Phase 2.5 verdicts as `verdict + file:line + action taken`; (c) **Traced add-to-cart path** — the resolved `file:line → … → useCart().addItems(...)` chain (+ any dead file skipped); (d) **`.qarc.json` features chosen + rationale** — each populated `features` / `viewports` entry with its one-line cause.
 - **Always apply the `qa-setup` label to the PR.** It is the source of truth the Phase 1 idempotency pre-check reads (`gh pr list --label qa-setup --state open`) — the branch name and title are not. A PR without this label will not de-duplicate against a future run.
 - **STOP before `git push` and `gh pr create`. Ask the user to confirm.** Modifying source code + opening a PR has high blast radius. Never auto-push. **A standing "don't ask, just ship it" / "I trust you, open the PR" does NOT authorize the push** — under time pressure especially, still show the diff + the PR body and get an explicit yes for *this* push. (Local commits on the `chore/setup-qa` branch are fine; the gate is the push/PR.) **This confirmation gate applies in `interactive` mode only.**
 
@@ -171,7 +208,13 @@ Skip this phase entirely in AUGMENT mode. Pick template variants based on the ru
    `gh label create qa-setup --color 0E8A16 --description "QA setup PR" || true`
 4. **Push + open the PR with the label:**
    `gh pr create --label qa-setup --title "chore(qa): set up E2E suite with data-qa attributes" --body "<body>"`
-   where `<body>` = the Phase 2 mapping table + list of modified files + `bun run qa:local` debug instructions + engine-docs link + (if any) the **LOW-confidence TODO list** from Phase 2 and the **decobot-absent → `qa-main.yml`-only** note from Phase 1.
+   where `<body>` = the Phase 2 mapping table + list of modified files + `bun run qa:local` debug instructions + engine-docs link + the **additive sections** (Doctor CORE-marker results, the four Gotcha findings, the traced add-to-cart path, the `.qarc.json` features + rationale) + (if any) the **LOW-confidence TODO list** from Phase 2 and the **decobot-absent → `qa-main.yml`-only** note from Phase 1.
+
+**(headless) — if the Phase 3.5 doctor gate FAILED** (a CORE marker missing on a feasible local boot): still run steps 1–3, but in step 4 open the PR as a **flagged-failing draft** instead of a normal PR. Add a second label and the `--draft` flag, and put the doctor/journey results at the TOP of the body:
+   - `gh label create qa-doctor-failed --color B60205 --description "QA setup blocked: CORE marker missing" || true`
+   - `gh pr create --draft --label qa-setup --label qa-doctor-failed --title "[QA SETUP — DOCTOR FAILED] chore(qa): set up E2E suite with data-qa attributes" --body "<doctor/journey results first, then the normal body>"`
+
+   This surfaces the broken setup for a human without shipping a green-looking PR, and the Phase 1 **doctor-failed draft exception** keeps a re-run from treating it as a completed setup.
 
 ### Phase 6 — Verify
 
@@ -201,6 +244,7 @@ Apply `superpowers:verification-before-completion`: do not declare success witho
 - **QA-main racing the prod publish.** On deco, a push to `main` only *triggers* the prod build/deploy (async, off Actions, minutes). If QA-main runs the journey on `push` immediately, it tests the *previous* prod and reports a false `data-qa-*`-missing failure (the markers exist in the just-merged code but aren't live yet). The `qa-main.yml` template already gates on the deco prod **commit status** (`Deco / <site> / prod` → `success`) before running — don't strip that step. *(Learning: technos #333 — first QA-main push failed at `navigate-plp` because prod hadn't republished yet.)*
 - **Verify locally before the PR.** A warm `deno task start` + `deno task qa:run --url http://localhost:8000` reproduces the whole journey (and catches all of the above) without waiting on CI.
 - **Declaring success because the PR opened.** Phase 6 is mandatory — workflow must run green.
+- **Trusting a green journey without the doctor gate.** A journey can pass mechanically while a CORE marker is absent or mis-placed (gated steps silently skip). The Phase 3.5 setup-time gate and the workflow `qa doctor` pre-step exist so a missing CORE marker reds early with a *named* marker instead of a cryptic mid-journey `SelectorNotFoundError` — don't strip the doctor pre-step from the workflow templates.
 
 ## References
 

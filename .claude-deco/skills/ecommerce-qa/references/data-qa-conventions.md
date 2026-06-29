@@ -9,6 +9,16 @@ Boolean attributes marking elements that the QA engine drives during the purchas
 - **Multiplicity:** when a slug appears multiple times on a page (e.g., `data-qa-product-card` on PLP), the engine resolves ambiguity via relative locators (e.g., "first buy button within first product card"). Do not number instances.
 - **Optional slugs:** some slugs are optional (search, CEP). The engine skips the related journey step if not present.
 
+## CORE markers (the doctor gate — REQ-01)
+
+Eight slugs are the **minimum viable journey** and are gated at setup time (SKILL.md Phase 3.5) and in CI (the workflow `qa doctor` pre-step + the journey):
+
+`data-qa-category-link`, `data-qa-product-card`, `data-qa-pdp-title`, `data-qa-buy-button`, `data-qa-cart-icon`, `data-qa-minicart`, `data-qa-minicart-checkout`, `data-qa-checkout-page`.
+
+- A missing **CORE** marker fails setup (the skill won't open a green-looking PR); a missing **optional** marker just skips its step.
+- `data-qa-checkout-page` is **satisfied by the attribute OR** a `features.checkoutUrlPattern` / `features.checkoutCrossOrigin` flag (a VTEX/external checkout you don't own — see `checkout-quirks.md`).
+- `qa doctor` is **single-page**, so on the homepage it can only confirm the **entry-page** CORE markers (`data-qa-category-link`, `data-qa-cart-icon`); the rest are confirmed by the journey (full, or `--smoke` = steps 1,2,3,5).
+
 ## The slugs
 
 ### `data-qa-category-link`
@@ -163,6 +173,7 @@ If no visible element matches, the engine falls back to the first DOM match (so 
 
 After Phase 3 of the skill, verify before opening the PR:
 
+- [ ] **CORE-marker doctor gate (Phase 3.5):** all 8 CORE markers present (or `data-qa-checkout-page` satisfied by a `features.checkout*` flag). Run `qa doctor --url <page>` on the key pages and/or `qa journey --smoke` against a local boot; a missing CORE marker blocks the PR (interactive) or opens a flagged draft (headless).
 - [ ] At least one of: `data-qa-category-link`, `data-qa-search-input` exists.
 - [ ] The **FIRST `data-qa-category-link` in DOM order** lands on a real PLP (verify via `qa doctor` on its target, or `curl <url>/ | grep -oE '<a[^>]*data-qa-category-link[^>]*>'`) — guards against the generic-nav over-marking pitfall. See `references/category-link-disambiguation.md`.
 - [ ] If `data-qa-category-link` is drawer-gated (mobile-first header), `data-qa-menu-trigger` is marked.
