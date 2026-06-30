@@ -3,6 +3,8 @@ name: pdp-seo-sections
 description: Use when LD+JSON, og:tags, or page title are absent from PDP HTML for crawlers. Applies when auditing deco PDP SEO, configuring structured data sections, verifying bot rendering, or diagnosing why rich snippets or social previews don't show product data.
 ---
 
+**Applies to:** sites using the standard `deco/apps` stack — specifically `commerce/sections/Seo/SeoPDPV2.tsx`, `isBot` from `deco/utils/userAgent.ts`, and `shouldForceRender` from `apps/utils/deferred.ts`. Sites with custom SEO components or custom rendering logic may not have these mechanisms; verify the stack before applying this skill.
+
 SEO metadata (LD+JSON, og:tags, `<title>`) on deco PDP pages requires specific configuration because sections load lazily by default. Bots that don't execute JavaScript — Bing, WhatsApp/Telegram previews, most price-comparison crawlers — never see product data unless forced to render server-side.
 
 ---
