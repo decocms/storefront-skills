@@ -1,7 +1,9 @@
 ---
 name: bot-rendering-audit
-description: Use when validating whether crawlers (Googlebot, Bingbot, GPTBot, ClaudeBot) receive SSR content with LD+JSON and og:tags on a deco storefront. Applies when diagnosing why Bing, AI crawlers, or social previews don't index product data, or when a WAF may be blocking legitimate bots.
+description: Use when doing a quick SEO check to verify whether crawlers receive LD+JSON and og:tags on a deco storefront. Not a definitive WAF audit — use as a first-pass signal to identify obvious misconfigurations in bot rendering or CDN blocking.
 ---
+
+This skill covers a **quick SEO-oriented verification** of bot rendering on deco storefronts. It is not a definitive CDN/WAF audit — the curl-based checks have inherent limitations (see below). Use this to surface obvious problems fast; for conclusive WAF analysis, use the Cloudflare Security Events dashboard.
 
 Bot access on a deco storefront has two independent layers that must both work:
 
@@ -12,9 +14,9 @@ A bot blocked at layer 1 never triggers `isBot`. A bot that passes layer 1 but i
 
 ---
 
-## Layer 1 — WAF access audit
+## Layer 1 — WAF access check
 
-Test HTTP status for each crawler UA. A `403` from Cloudflare means the bot never reaches deco.
+Test HTTP status for each crawler UA. A `403` from Cloudflare means the bot is being blocked.
 
 ```bash
 STORE="https://www.store.com"
@@ -24,23 +26,34 @@ for BOT in \
   "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)" \
   "GPTBot/1.0" \
   "ClaudeBot" \
-  "PerplexityBot/1.0" \
-  "Applebot/0.1"
+  "PerplexityBot/1.0"
 do
   STATUS=$(curl -so /dev/null -w "%{http_code}" -A "$BOT" "$STORE/")
   echo "$STATUS  $BOT"
 done
 ```
 
-Expected: all `200`. A `403` with `server: cloudflare` header means the Cloudflare WAF has a rule blocking that UA.
+**What a `403` tells you:** the WAF has a rule matching that UA — the real crawler is almost certainly blocked too, since UA-based rules apply regardless of origin IP.
 
-**Important caveat:** Cloudflare distinguishes spoofed UAs (curl from a random IP) from verified bots (real Googlebot from Google's IP range). A `200` for Googlebot UA from curl doesn't guarantee real Googlebot passes — but a `403` confirms the bot is blocked regardless of origin.
+**What a `200` does NOT guarantee:** the real bot may still be blocked by IP reputation, ASN rules, or bot score analysis that curl cannot trigger. A `200` from curl is a good sign, not a proof.
+
+### Limitations of UA-based testing
+
+| Cloudflare mechanism | curl detects? | Notes |
+|---|---|---|
+| WAF rule by User-Agent | ✅ yes | Most common block type; curl is reliable here |
+| IP/ASN block | ❌ no | Real bot comes from Microsoft/Google datacenter IPs |
+| Bot Score (behavioral) | ❌ no | Cloudflare analyzes request patterns curl doesn't reproduce |
+| JS Challenge | ❌ no | curl cannot execute JavaScript challenges |
+| Verified Bot allowlist | ⚠️ inverse | Real bot from verified IP may bypass a rule that blocks curl |
+
+**For conclusive WAF analysis:** Cloudflare dashboard → Security → Events, filtered by the bot's ASN (e.g., AS8075 for Microsoft/Bing). This shows real bot traffic, which rule fired, and whether Verified Bot IPs are being allowed or blocked.
 
 ---
 
-## Layer 2 — isBot / SSR rendering audit
+## Layer 2 — isBot / SSR rendering check
 
-For bots that pass layer 1, verify they receive full SSR (LD+JSON present in initial HTML, no deferred placeholder):
+For bots that pass layer 1, verify they receive full SSR (LD+JSON present in initial HTML):
 
 ```bash
 PDP="https://www.store.com/product-slug/p"
@@ -58,12 +71,12 @@ done
 
 Expected: bot UAs return `≥1`, user UA returns `0`.
 
-**Baseline control:** `?__decoFBT=0` shows the maximum LD+JSON count any bot should see:
+**Baseline control:** `?__decoFBT=0` forces full SSR — shows the maximum LD+JSON any bot should see:
 ```bash
 curl -s "$PDP?__decoFBT=0" | grep -c "application/ld+json"
 ```
 
-If a bot UA returns `0` but `__decoFBT=0` returns `≥1`, the bot is not being detected by `isBot`.
+If a bot UA returns `0` but `__decoFBT=0` returns `≥1`, the bot UA is not being detected by `isBot`.
 
 ---
 
@@ -71,13 +84,13 @@ If a bot UA returns `0` but `__decoFBT=0` returns `≥1`, the bot is not being d
 
 `isBot` (`deco/utils/userAgent.ts`) checks three paths in order:
 
-| Path | Mechanism | Controllable? |
-|---|---|---|
-| `cf-verified-bot: true` header | Cloudflare injects for verified bot IPs | Cloudflare plan (Business/Enterprise) |
-| `KNOWN_BOTS` list | Hardcoded: `["Google-InspectionTool"]` | Code change in deco repo |
-| UA parser | `ua-parser-js` Bots extension | Covers Googlebot, Bingbot, GPTBot, etc. |
+| Path | Mechanism |
+|---|---|
+| `cf-verified-bot: true` header | Cloudflare injects for real bots coming from verified IP ranges (Business/Enterprise plan) |
+| `KNOWN_BOTS` list | Hardcoded list, e.g. `["Google-InspectionTool"]` |
+| UA parser | `ua-parser-js` Bots extension — covers Googlebot, Bingbot, GPTBot, etc. |
 
-If none match, `isBot = false` and the page is served as a deferred shell.
+If none match, `isBot = false` and the page is served as a deferred shell with no LD+JSON.
 
 ---
 
@@ -86,27 +99,14 @@ If none match, `isBot = false` and the page is served as a deferred shell.
 | WAF | isBot | LD+JSON | Root cause |
 |---|---|---|---|
 | ✅ 200 | ✅ detected | ✅ present | Working correctly |
-| ❌ 403 | — | ❌ absent | Cloudflare WAF rule blocking UA — fix in Cloudflare dashboard |
-| ✅ 200 | ❌ not detected | ❌ absent | UA not in KNOWN_BOTS and not recognized by ua-parser-js |
+| ❌ 403 | — | ❌ absent | WAF rule blocking that UA — fix in Cloudflare dashboard |
+| ✅ 200 | ❌ not detected | ❌ absent | UA not recognized by ua-parser-js or KNOWN_BOTS |
 | ✅ 200 | ✅ detected | ❌ absent | SEO section misconfigured — see `pdp-seo-sections` skill |
 
 ---
 
-## Common issues
+## Google Search Console — end-to-end validation
 
-**bingbot returning 403**
-Cloudflare WAF has a rule blocking the bingbot UA. Real Bing crawler can't index any page. Fix: review Security → WAF rules in the Cloudflare dashboard for that zone. Check if a custom rule targets `bingbot` UA or a broad bot-blocking rule was enabled.
+URL Inspection → "Test Live URL" uses real Googlebot from Google's verified IP range. If the rendered page shows product name, price, and structured data — both layers work end-to-end.
 
-**GPTBot/ClaudeBot returning shell (0 LD+JSON)**
-These UAs are recognized by ua-parser-js as bots, so they should pass isBot. If they don't, check that `shouldForceRender` is wired up in the page handler and that `firstByteThresholdMS` is not overriding bot detection (see `pdp-seo-sections` skill).
-
-**Googlebot UA gets 200 + LD+JSON but Google Search Console shows missing data**
-The curl test uses a spoofed UA from a random IP. Real Googlebot comes from verified Google IPs and Cloudflare adds `cf-verified-bot: true`. Use Google Search Console → URL Inspection → "Test Live URL" to confirm what the actual crawler sees.
-
----
-
-## Google Search Console validation (layer 1 + layer 2 combined)
-
-URL Inspection → "Test Live URL" uses real Googlebot from Google's verified IP range. If the rendered page shows product name, price, and structured data — both layers are working end-to-end for Google.
-
-This is the only way to validate the `cf-verified-bot` path since that header is only set for traffic coming from verified bot IP ranges.
+This is the only way to validate the `cf-verified-bot` path, since that header is only set for traffic coming from verified bot IP ranges — something curl cannot reproduce.
