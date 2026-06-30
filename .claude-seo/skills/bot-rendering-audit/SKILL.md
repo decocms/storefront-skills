@@ -5,6 +5,8 @@ description: Use when doing a quick SEO check to verify whether crawlers receive
 
 This skill covers a **quick SEO-oriented verification** of bot rendering on deco storefronts. It is not a definitive CDN/WAF audit — the curl-based checks have inherent limitations (see below). Use this to surface obvious problems fast; for conclusive WAF analysis, use the Cloudflare Security Events dashboard.
 
+**Prerequisite:** the `isBot` detection and `__decoFBT=0` behavior described here are specific to sites using the standard `deco/apps` stack — `isBot` from `deco/utils/userAgent.ts` and `shouldForceRender` from `apps/utils/deferred.ts`. Sites with custom rendering logic may not have these mechanisms at all; verify before assuming.
+
 Bot access on a deco storefront has two independent layers that must both work:
 
 1. **CDN/WAF layer** (Cloudflare) — does the bot reach the server at all?
