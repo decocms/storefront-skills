@@ -38,7 +38,6 @@ Without this extension, `<title>` and og:tags never reach `<head>` for regular u
 
 | Mistake | Symptom | Fix |
 |---|---|---|
-| SEO section placed after Footer | Bots that stop early miss LD+JSON | Move SEO section near the top of the page |
 | Wrong loader connected | LD+JSON has missing/wrong data | Use the same loader as the product/listing section |
 | HTMX missing `head-support` | Users don't get `<title>` or og:tags | Add `"head-support"` to HTMX extensions in site.json |
 | Custom component without LD+JSON | `<title>` works but 0 rich snippets | Replace with the apps SEO section for that page type |
