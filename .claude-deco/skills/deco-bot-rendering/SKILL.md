@@ -10,7 +10,7 @@ deco renders pages differently for bots vs. normal users. Understanding this dis
 | Mode | Initial HTML | Who sees it |
 |---|---|---|
 | **SSR** | Full section content | Everyone |
-| **Deferred** | `<div hx-trigger="intersect once">` placeholder | No one in initial HTML — JS users see it after HTMX fetches via `/deco/render` on scroll |
+| **Deferred** | placeholder | No one in initial HTML — JS users see it after HTMX fetches via `/deco/render` on scroll |
 
 By default, `ProductDetails` and other above-the-fold sections are deferred. Bots that don't execute JavaScript never trigger HTMX and never see deferred content.
 
