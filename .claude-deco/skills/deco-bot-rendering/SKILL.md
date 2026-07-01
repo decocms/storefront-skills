@@ -1,6 +1,6 @@
 ---
 name: deco-bot-rendering
-description: Use when debugging what crawlers or bots see on a deco site, verifying if SSR is active for bots, diagnosing firstByteThresholdMS behavior, or returning HTTP 404 from a section loader.
+description: Use when debugging what crawlers or bots see on a deco site, verifying if SSR is active for bots, or diagnosing firstByteThresholdMS behavior.
 ---
 
 deco renders pages differently for bots vs. normal users. Understanding this distinction is essential for debugging SEO issues, auditing crawlability, and handling missing products correctly.
@@ -58,20 +58,3 @@ const delay = Number(url.searchParams.get("__decoFBT") ?? delayFromProps);
 ```
 
 **Fix:** Set `firstByteThresholdMS: false` in `.deco/blocks/site.json`. This field is deprecated and must not be `true`.
-
-## Returning HTTP 404 from a section loader
-
-`return null` from a loader does **not** emit HTTP 404. Use `notFound()` from `@deco/deco`, which calls `shortcircuit()` and throws `HttpError(404)`:
-
-```typescript
-import { notFound } from "@deco/deco";
-
-export const loader = async (props: Props, _req: Request, ctx: AppContext) => {
-  if (!props.page) {
-    notFound(); // HTTP 404 for bots (SSR); user gets deferred error state
-  }
-  // ...
-};
-```
-
-For bots (`shouldForceRender = true`), `notFound()` fires during the initial SSR request — the entire response is HTTP 404. For regular users (deferred), the `/deco/render` partial always returns HTTP 200 regardless.
