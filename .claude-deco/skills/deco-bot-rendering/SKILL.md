@@ -12,8 +12,6 @@ deco renders pages differently for bots vs. normal users. Understanding this dis
 | **SSR** | Full section content | Everyone |
 | **Deferred** | placeholder | No one in initial HTML — JS users see it after HTMX fetches via `/deco/render` on scroll |
 
-By default, `ProductDetails` and other above-the-fold sections are deferred. Bots that don't execute JavaScript never trigger HTMX and never see deferred content.
-
 ## shouldForceRender — bot bypass
 
 `apps/utils/deferred.ts` exports `shouldForceRender`, which bypasses deferred loading entirely:
@@ -30,7 +28,7 @@ When `true`, all sections render SSR in the initial request — no placeholders,
 
 `deco/utils/userAgent.ts` checks in order:
 
-1. Cloudflare header `cf-verified-bot: true` (Business/Enterprise plans only)
+1. Cloudflare header `cf-verified-bot: true` 
 2. `KNOWN_BOTS` hardcoded list — e.g. `"Google-InspectionTool"`
 3. UA parser (`ua-parser-js` Bots extension) — covers Googlebot, GPTBot, ClaudeBot, PerplexityBot, Bingbot, etc.
 
