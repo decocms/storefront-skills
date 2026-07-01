@@ -36,7 +36,7 @@ When `true`, all sections render SSR in the initial request — no placeholders,
 
 ## `?__decoFBT=0` — simulate bot rendering
 
-Append `?__decoFBT=0` to any URL to force SSR for all sections — shows exactly what crawlers receive:
+Append `?__decoFBT=0` to any URL to force SSR for all sections — shows what crawlers receive (provided `firstByteThresholdMS` is not active; see below):
 
 ```bash
 # What a bot sees (forced SSR)
