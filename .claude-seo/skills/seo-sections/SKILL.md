@@ -34,8 +34,6 @@ Without this extension, `<title>` and og:tags never reach `<head>` for regular u
 }
 ```
 
-Set in `.deco/blocks/site.json`.
-
 ## Common mistakes
 
 | Mistake | Symptom | Fix |
