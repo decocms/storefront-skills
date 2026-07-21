@@ -3,6 +3,28 @@ name: html-size-optimizer
 description: "Shrink first-byte HTML and embedded payloads: trim framework state scripts (Fresh/Next), event data attributes, JSON-LD bloat, and duplicate responsive markup so the client receives less markup and JSON."
 ---
 
+## How to measure HTML size (do this first)
+
+Before hunting for bloat, measure — and measure the **decoded** size, not the transferred one.
+gzip/brotli compresses repeated JSON keys heavily, so a bloated page hides on the wire (a listing page
+can be ~150 KB brotli but several MB decoded). The Network "transferred" column will look fine.
+
+```js
+// in the page console — decoded bytes the browser actually parses:
+document.documentElement.outerHTML.length
+```
+
+```bash
+# same thing from the terminal (‑‑compressed makes curl decode the response):
+curl -sS --compressed "https://<site>/<path>" | wc -c
+```
+
+Rule of thumb: a page over ~1–2 MB **decoded** is worth investigating — walk the sections below to find
+what's inflating it. (In the browser Network tab you can also hover the "Size" cell → it shows
+"X transferred over network, Y resource size"; the second number is the decoded size.)
+
+---
+
 ## 1. JSON data for the framework
 
 Many frameworks inject large JSON payloads into the HTML, for example:
@@ -73,18 +95,14 @@ pass *that* to the handler — never the raw product.
 Result on the store above: PLP HTML **11.9 MB → 0.63 MB (~18×)**, tracking
 identical (same `dataLayer` event, field for field).
 
-**How to detect it fast:** the payload is highly compressible (repeated JSON keys),
-so it hides on the wire — a PLP can be ~150 KB brotli but **11 MB decoded**. Don't
-trust the Network "transferred" column; measure the decoded size:
+**How to spot this specific case:** after measuring the decoded size (see "How to measure" above),
+grep for a marker that only exists in the serialized offers — on VTEX, `billingIncrement`:
 
 ```js
-document.documentElement.outerHTML.length              // decoded bytes
-// count a VTEX offers marker that only exists in the bloat:
 (document.documentElement.outerHTML.match(/billingIncrement/g) || []).length
 ```
 
-A category PLP over a few MB decoded, or a nonzero `billingIncrement` count, is the
-smell.
+A nonzero count on a listing page means the full offers/installments object is being serialized per card.
 
 ---
 
