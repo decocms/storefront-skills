@@ -16,10 +16,21 @@ End-to-end workflow for turning a Figma design file into a fully functional Deco
 
 ## Prerequisites
 
-- A Figma file URL (format: `https://figma.com/design/:fileKey/:fileName`)
+- A Figma file URL (format: `https://figma.com/design/:fileKey/:fileName`), ideally with `?node-id=` for the frame to implement
 - A Deco storefront repository cloned locally
-- Figma MCP tools available (get_metadata, get_design_context, get_screenshot, get_variable_defs, use_figma)
+- **Official Figma MCP tools** — `get_metadata`, `get_design_context`, `get_screenshot`, `get_variable_defs`, `use_figma`. This skill does not talk to Figma by itself. Without those tools the agent will guess layout and the result will not match Figma Dev Mode output.
 - Playwright installed for QA phase
+
+### Where the official Figma MCP works
+
+| Client | Remote `https://mcp.figma.com/mcp` | Desktop `http://127.0.0.1:3845/mcp` |
+|---|---|---|
+| Cursor, Claude Code, Codex | Yes (OAuth — these clients are on Figma's MCP Catalog) | Yes, if Dev Mode MCP is enabled in the Figma desktop app |
+| Deco Studio | **Not yet.** Figma rejects Studio's Dynamic Client Registration (HTTP 403). A Figma PAT / Bearer token does **not** authenticate the remote MCP. Tunnels to `:3845` also fail from Studio cloud. Use Cursor/Claude for Figma work until Deco is on the [Figma MCP Catalog](https://www.figma.com/mcp-catalog/). | No — Studio cloud cannot reach the user's localhost |
+
+Live canvas **selection** is desktop-MCP only. The remote MCP (and this skill) use the **file URL + node id**. Always pass the Figma link; do not assume a selection is available.
+
+Do not substitute a REST-API wrapper or invent tools with other names. If the official tools are missing, stop and tell the user to open the file in Cursor/Claude with the Figma MCP connected.
 
 ---
 
