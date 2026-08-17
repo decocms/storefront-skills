@@ -98,11 +98,21 @@ The `Image` and `Source` components automatically generate a srcset with density
 
 ### Setting a Site-Wide Default
 
-Configure `defaultImageQuality` in the website app props (`mod.ts`). This sets the quality for every `Image`, `Source`, and `Picture` component that doesn't explicitly override it.
+Configure `defaultImageQuality` in the website app props. This sets the quality for every `Image`, `Source`, and `Picture` component that doesn't explicitly override it.
 
 - Type: `DefaultQualityOptions` — allows `"low"`, `"medium"`, or `"high"` (excludes `"original"` to protect performance)
 - Provided to components via `DefaultImageQualityContext` (React context)
 - Any component can override the default with its own `quality` prop
+
+**This is exposed as a CMS panel field, not just code.** In the CMS it appears under the **site config** (site settings → the `website` app) as **"Default Image Quality"** — *"The default quality for images when not explicitly set per component"* — a dropdown with `low` / `medium` / `high`. Anyone can change it from the UI without touching the repo.
+
+> ⚠️ **Check this first when the whole site's images look soft/low-quality.** If it's set to **`low`** (60), *every* image that doesn't set its own `quality` prop is degraded site-wide — a silent, global quality regression that no per-component change will fix. It's easy to miss because nobody "changed the code."
+>
+> **Recommended: `high`** for storefronts where product/hero images matter (jewelry, fashion, etc.). `medium` (70) is an acceptable perf/quality balance; **`low` (60) is usually too aggressive** for a product catalog. Set it explicitly rather than relying on whatever the panel happens to hold.
+
+> **Two different "blurry" causes — don't confuse them:**
+> - **Soft across the *whole* site** → likely the **Default Image Quality** panel set to `low` (this section).
+> - **Pixelated on *one* banner/section, worse on retina** → the **source image is smaller than the slot needs** (see the `image-resolution` skill). Quality won't fix that; you need a bigger source.
 
 ---
 
@@ -225,7 +235,7 @@ Response headers include:
 2. **Set width and height** — prevents Cumulative Layout Shift (CLS)
 3. **Use `Picture` for responsive art direction** — serve appropriately sized images per breakpoint
 4. **Use `"high"` quality for hero images, `"medium"` or `"low"` for thumbnails** — balance visual quality vs file size
-5. **Set a site-wide `defaultImageQuality`** — avoid forgetting quality on individual components; `"medium"` (70) is a good default
+5. **Set a site-wide `defaultImageQuality` explicitly** — avoid forgetting quality on individual components. Prefer `"high"` for product/hero-heavy storefronts (`"medium"` is an acceptable balance). **Verify the CMS "Default Image Quality" panel isn't silently on `low`** — it degrades every non-overriding image site-wide
 6. **Let lazy loading work** — only set `loading="eager"` on above-the-fold images
 7. **Don't bypass optimization without reason** — the platform and deco CDN pipelines significantly reduce payload size
 
