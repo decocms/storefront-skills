@@ -112,7 +112,75 @@ Configure `defaultImageQuality` in the website app props. This sets the quality 
 
 > **Two different "blurry" causes — don't confuse them:**
 > - **Soft across the *whole* site** → likely the **Default Image Quality** panel set to `low` (this section).
-> - **Pixelated on *one* banner/section, worse on retina** → the **source image is smaller than the slot needs** (see the `image-resolution` skill). Quality won't fix that; you need a bigger source.
+> - **Pixelated on *one* banner/section, worse on retina** → the **source image is smaller than the slot needs** (see *Diagnosing blurry / pixelated images* below). Quality won't fix that; you need a bigger source.
+
+---
+
+## Diagnosing blurry / pixelated images (undersized source)
+
+The most common "distorted image" report is **not** stretching — it's a **source image with fewer pixels than the slot needs on retina (DPR2) screens**, so the pixels get upscaled and blur.
+
+Tell-tale sign: **sharp when the file is opened directly, pixelated on the site.** (Opening shows the small native size; the site displays it larger.)
+
+### Mechanism
+
+1. The `Image`/`Source` declares a **base** `width` — the 1× size the slot occupies on a normal screen.
+2. deco **auto-generates a 2× (and 3×) variant in the `srcset`** (see *Responsive Images* above). On a **DPR2** device, `width={700}` makes the browser fetch the **1400px** variant. (DPR = Device Pixel Ratio; "retina" = DPR ≥ 2; most phones and Macs are DPR2–3.)
+3. If the uploaded source is smaller than that (e.g. 542px for a 1400px slot), the pixels are invented by upscaling ~2.6×. **No parameter fixes this** — `quality="original"` adds no detail that was never photographed, only bytes.
+
+**Required source pixels = rendered CSS width × DPR.** A card that renders ~700px wide needs **1400px** on DPR2. Secondary effect: if the source aspect ratio ≠ the slot ratio, `fit="cover"` **crops** to fill (a slight crop people also read as "distorted").
+
+### Diagnose
+
+**1. Measure the real source** (not the served size) — request it **without** `width`/`height` so the proxy returns the original, then measure:
+
+```bash
+curl -sL "https://decoims.com/image?quality=original&src=<ENCODED_SRC>" -o /tmp/orig.webp
+sips -g pixelWidth -g pixelHeight /tmp/orig.webp   # macOS; or: identify orig.webp
+```
+
+⚠️ If you leave `width=1400` in the URL, `naturalWidth` reports **1400** — the already-upscaled output, not the source. The real size only shows with the resize params removed.
+
+**2. Find what the component asks for** — read the `Image`/`Source` `width`. The retina requirement is **`width × 2`**:
+
+```tsx
+<Source src={imageDesktop} width={700} height={342} media="(min-width: 1024px)" /> // → needs 1400×684
+<Source src={imageMobile}  width={375} height={184} media="(max-width: 1023px)" /> // → needs 750×368
+```
+
+**Verdict:** source pixels ≥ `width × 2` → sharp. Source `<` `width × 2` → blurry (upscaled). **That's the bug.**
+
+### Fix
+
+**Upload a larger source.** Minimum = the slot's 2× size, in the slot's aspect ratio (bigger is fine — the proxy downscales, which never blurs; smaller is the bug).
+
+- Desktop card ~700px wide → **1400×684** (≈2.05:1)
+- Full-width mobile ~375px wide → **750×368** (or **700×700** if the mobile `Source` is square — see below)
+
+Things that do **not** fix it: changing `width`/`height` (the on-screen slot is unchanged, the browser upscales anyway); `quality="original"` (no detail added — drop it to `"high"` to save bytes); CDN sharpening (deco/VTEX barely sharpens); shrinking the component in CSS (only helps if shrunk to ≤ source/2 CSS px, and it changes the design for *every* reuse of the component).
+
+**No larger original?** Upscale with AI (e.g. **Upscayl**, free/local) — pick a scale that clears the target (3× on 542px → 1626px > 1400 ✓; 2× → 1084px < 1400 ✗). **Caveat:** AI invents detail — zoom in and verify fine features (gemstones, engraved text, logos) before shipping. A real higher-res photo always beats an upscale.
+
+### Keep the admin guidance honest
+
+deco renders a field's `@description` / `@title` JSDoc as the **CMS admin help text**. If it states a 1× size (e.g. `572x280`), editors upload undersized images. **State the 2× retina target:**
+
+```tsx
+interface CardImage {
+  /** @description size Image 750x368 */   // mobile, 2×
+  imageMobile: ImageWidget;
+  /** @description size Image 1400x684 */   // desktop, 2×
+  imageDesktop: ImageWidget;
+}
+```
+
+### Mobile vs desktop: watch the per-breakpoint `Source`
+
+A `Picture` has a separate `Source` per media query, each with its own `width`/`height` — so the **aspect ratio can differ between mobile and desktop**. A common bug: desktop is a wide rectangle (700×342, ~2:1) but mobile is **square** (350×350, 1:1), making mobile `fit="cover"`-crop the photo into a square (subject floating in whitespace). Decide the intended mobile shape by **looking at the live mobile render** (emulate DPR and screenshot), not by guessing from code, then make the `Source` and the uploaded image agree (rectangular → `375×184`, image 750×368; square → `350×350`, image 700×700).
+
+### Plain-language explanation for a non-technical stakeholder
+
+> The image looks pixelated because the uploaded file is smaller than the space it fills on the site. The banner needs an image of **1400×684 px** (and **750×368 px** for mobile), but the current one is only 542×280 px, so the site has to stretch it. It looks sharp when you open the file directly because there it shows at its small original size; on the site it's enlarged. Fix: upload the image at the larger size — ideally the original high-resolution photo.
 
 ---
 

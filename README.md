@@ -19,8 +19,7 @@ Improves discoverability and indexing of storefront pages for search engines.
 ### ⚡ Performance
 Keeps storefronts fast and responsive for users and Core Web Vitals.
 
-- **images** — Formats, sizing, lazy loading, and alt text for product and hero images.
-- **image-resolution** — Diagnose blurry/pixelated banner images caused by a source smaller than the slot needs on retina (DPR2), plus how big to upload (desktop vs mobile).
+- **images** — Formats, sizing, lazy loading, alt text, the CMS Default Image Quality setting, and diagnosing blurry images from an undersized source (retina/DPR2).
 - **video** — The `Video` component, autoplay, and audio. Why uploaded videos are silent by default and how to enable sound with `?muted=false` (URL or CMS panel).
 - **cache** — Cache HIT rate, cache-control headers, stale-while-revalidate (SWR), and immutable assets.
 - **html-size** — Reducing HTML payload and finding elements that unnecessarily inflate page size.
