@@ -1,6 +1,6 @@
 ---
 name: new-page
-description: Create a new page on a deco.cx storefront — including route, metadata, and sections. Use when the user asks to add, create, or scaffold a new page or route in a deco site.
+description: Create a new page on a deco.cx storefront — including route, metadata, sections, and dynamic route params (e.g. /category/:slug). Use when the user asks to add, create, or scaffold a new page or route in a deco site, or to pass a URL param into a section/loader.
 ---
 
 # Creating a New Page on deco.cx
@@ -144,3 +144,46 @@ Create a loader at `loaders/myData.ts` whose return type matches the section pro
 ```ts
 const data = await ctx.invoke["site/loaders/myLoader.ts"]({ count: 1 });
 ```
+
+---
+
+## Step 7 — Dynamic routes: pass a URL param into a section or loader
+
+A dynamic page declares params in its `path` (`/category/:slug`, `/:slug/p`, `/:slug*`). But a section or loader does **not** read the URL itself — the value is injected into a prop by the built-in `website/functions/requestToParam.ts` resolver. This is the missing link between a `:param` in the path and the code that needs it.
+
+Set the target prop to a `requestToParam` block naming the param:
+
+```json
+{
+  "__resolveType": "site/sections/CategoryPage.tsx",
+  "slug": {
+    "__resolveType": "website/functions/requestToParam.ts",
+    "param": "slug"
+  }
+}
+```
+
+At request time the framework matches the URL against the page `path`, then resolves that block to the actual segment — so on `/category/shoes` the section receives `slug: "shoes"` before its loader/render runs.
+
+### Feed the param into a loader (the common case)
+
+Usually the param drives a data fetch (a PDP by slug, a PLP by category). Point the **loader's** prop at `requestToParam`, so the loader receives the resolved value:
+
+```json
+{
+  "__resolveType": "site/sections/ProductShelf.tsx",
+  "products": {
+    "__resolveType": "site/loaders/productList.ts",
+    "slug": {
+      "__resolveType": "website/functions/requestToParam.ts",
+      "param": "slug"
+    }
+  }
+}
+```
+
+The loader runs server-side as `(props, req, ctx)` and reads `props.slug` already resolved to the URL segment — no manual URL parsing. Route params are **not** exposed on `ctx`, so `requestToParam` is the intended way to reach them.
+
+**Notes**
+- `param` must match the name in the page `path` exactly (`:slug` → `"param": "slug"`).
+- Pages are matched by path specificity, so a param route (`/category/:slug`) wins over a broader/wildcard one when both could match.
