@@ -17,6 +17,7 @@ Rules:
 - Use `class` (not `className`) for Tailwind
 - **No client-side code** in the section file — no hooks, event listeners, `onClick`, `useState`, `useEffect`, etc.
 - All props must have TypeScript types; use `?` for optional props and always provide default values in the function signature
+- Every prop gets a `/** @title */`, and every array item type gets a `/** @titleBy <field> */`. Without them the Admin labels fields by their raw camelCase identifier and array rows as `Item 1`, `Item 2`. Declaration order is form order — content first, configuration last. Full rules and the widget/format table: **`cms-friendly-props`**.
 
 ```typescriptreact
 import type { ImageWidget } from "apps/admin/widgets.ts";
@@ -25,11 +26,31 @@ import type { Product } from "apps/commerce/types.ts";
 import type { ProductDetailsPage } from "apps/commerce/types.ts";
 import type { ProductListingPage } from "apps/commerce/types.ts";
 
+/** @titleBy label */
+export interface Highlight {
+  /** @title Label */
+  label: string;
+  /** @title Link */
+  href: string;
+}
+
 export interface Props {
+  /** @title Title */
   title?: string;
+  /**
+   * @title Description
+   * @description Shown under the title.
+   */
   description?: TextArea;
+  /**
+   * @title Image
+   * @description Upload at 2x the displayed size so it stays sharp on retina screens.
+   */
   image?: ImageWidget;
+  /** @title Background color */
   backgroundColor?: Color;
+  /** @title Highlights */
+  highlights?: Highlight[];
   products?: Product[] | null;
   productPage?: ProductDetailsPage | null;
   productListingPage?: ProductListingPage | null;
@@ -191,5 +212,11 @@ To remove a section, set `newValue` to `undefined`.
 | `Product` | `import type { Product } from "apps/commerce/types.ts"` |
 | `ProductDetailsPage` | `import type { ProductDetailsPage } from "apps/commerce/types.ts"` |
 | `ProductListingPage` | `import type { ProductListingPage } from "apps/commerce/types.ts"` |
+
+`VideoWidget`, `HTMLWidget`, `RichText`, `Secret`, `Code` and `DateTimeWidget`
+come from `apps/admin/widgets.ts` too. The formats with no type alias
+(`dynamic-options`, `icon-select`, `date`, `url`, `markdown`, `rich-text-inline`)
+are reached with `@format` — see **`cms-friendly-props`** for the full table and
+for the prop shapes that break the Admin form.
 
 ---
