@@ -12,6 +12,10 @@ This skill is about which JavaScript, and when.
 Out of scope here: layout stability (CLS), image weight (`image-optimizer`),
 HTML payload (`html-size-optimizer`), caching (`cache`).
 
+**Before this skill:** if you are acting on a whole PageSpeed score rather than
+on the main thread specifically, read `pagespeed-score-model` first — it says
+which metric is worth the next change, and TBT is only 30% of the answer.
+
 ## Attribute before you touch anything
 
 A score is not a diagnosis. Block things at the network layer and re-measure —
@@ -194,6 +198,7 @@ not move the number it was supposed to move.
 
 ## Related
 
-`image-optimizer` and `images` (image weight and LCP candidates),
+`pagespeed-score-model` (score weights, the Lantern LCP byte budget, and when a
+target is unreachable), `image-optimizer` and `images` (image weight and LCP candidates),
 `html-size-optimizer` (first-byte HTML), `cache` and `cacheable-matchers`
 (delivery), `new-section` (where interactivity is allowed to live).
