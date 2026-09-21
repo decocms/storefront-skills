@@ -1,6 +1,6 @@
 ---
 name: variants
-description: "Configure deco.cx Variants — the mechanism that swaps the value of a section, page, image, message, or ANY custom-typed prop based on a matcher rule (device, cookie, date, A/B test, geo, path, query string, etc.). Use when the user asks to A/B test a section, personalize a page per audience/segment, show different banners per device or location, schedule a promotion by date/cron, add a new variant-able type (promotion, VTEX segment, product list, menu items), write a custom matcher, or generally wire up `website/flags/multivariate*` in `.deco/blocks/*.json`. Covers the JSON shape (`variants: [{ value, rule }]`), the resolution order (first match wins, catch-all last), every built-in matcher (`always`, `never`, `device`, `date`, `cron`, `random`, `cookie`, `host`, `pathname`, `queryString`, `userAgent`, `location`, `site`, `environment`, `multi`, `negate`), how to compose them with `multi` (and/or) and `negate`, the 8-line boilerplate to create your own `flags/multivariate/<type>.ts`, the shape of a custom `matchers/<name>.ts`, and links to `[[cacheable-matchers]]` for the caching trade-offs."
+description: "Configure deco.cx Variants — the mechanism that swaps the value of a section, page, image, message, or ANY custom-typed prop based on a matcher rule (device, cookie, date, A/B test, geo, path, query string, etc.). Use when the user asks to A/B test a section, personalize a page per audience/segment, show different banners per device or location, schedule a promotion by date/cron, add a new variant-able type (promotion, VTEX segment, product list, menu items), write a custom matcher, or generally wire up `website/flags/multivariate*` in `.deco/blocks/*.json`. Covers the JSON shape (`variants: [{ value, rule }]`), the resolution order (first match wins, catch-all last), every built-in matcher (`always`, `never`, `device`, `date`, `cron`, `random`, `cookie`, `host`, `pathname`, `queryString`, `userAgent`, `location`, `site`, `environment`, `multi`, `negate`), how to compose them with `multi` (and/or) and `negate`, which flag types actually resolve on each runtime (`image.ts`/`message.ts` are Deno/Fresh-only and fail silently on TanStack — use `website/flags/multivariate.ts` there), the 8-line boilerplate to create your own `flags/multivariate/<type>.ts` (Deno/Fresh only), the shape of a custom `matchers/<name>.ts`, and links to `[[cacheable-matchers]]` for the caching trade-offs."
 ---
 
 # Variants on deco.cx
@@ -17,14 +17,70 @@ For the caching implications of matchers (edge cache, cold-visitor bias, `cachea
 
 All four have the exact same JSON shape (`{ variants: [...] }`). They differ only in the **type of value** they resolve to:
 
-| Flag | `__resolveType` | Value type |
-|---|---|---|
-| **Section Variants** | `website/flags/multivariate/section.ts` | A single section block |
-| **Page Variants** | `website/flags/multivariate.ts` (page-level) | The array of sections for a page |
-| **Image Variants** | `website/flags/multivariate/image.ts` | An `ImageWidget` (image URL) |
-| **Message Variants** | `website/flags/multivariate/message.ts` | A `string` |
+| Flag | `__resolveType` | Value type | Deno/Fresh | TanStack |
+|---|---|---|---|---|
+| **Section Variants** | `website/flags/multivariate/section.ts` | A single section block | ✅ | ✅ |
+| **Page Variants** | `website/flags/multivariate.ts` | The array of sections for a page | ✅ | ✅ (and any value type — see below) |
+| **Image Variants** | `website/flags/multivariate/image.ts` | An `ImageWidget` (image URL) | ✅ | ❌ **silently broken** |
+| **Message Variants** | `website/flags/multivariate/message.ts` | A `string` | ✅ | ❌ **silently broken** |
 
 The most common one on storefronts is **Section Variants** — swap a specific section (a banner, a shelf, a hero) per visitor.
+
+---
+
+## ⚠️ Runtime support: the two type-specific flags do NOT exist on TanStack
+
+**On a TanStack storefront, use `website/flags/multivariate.ts` for everything that is not a
+section.** `image.ts` and `message.ts` resolve to nothing there, and they fail *silently*.
+
+The two runtimes resolve flags differently:
+
+- **Deno/Fresh** (`deco-cx/apps`) resolves a flag by **module path**, so any file under
+  `flags/multivariate/` works — including ones a site declares itself.
+- **TanStack** (`@decocms/blocks`) compares `__resolveType` against **two hardcoded strings**
+  (`src/cms/resolve.ts`, `WELL_KNOWN_TYPES`):
+
+  ```ts
+  if (
+    resolveType === WELL_KNOWN_TYPES.MULTIVARIATE ||       // "website/flags/multivariate.ts"
+    resolveType === WELL_KNOWN_TYPES.MULTIVARIATE_SECTION  // "website/flags/multivariate/section.ts"
+  ) { /* evaluate rules, return the matched variant's value */ }
+  ```
+
+  Verified identical in `@decocms/blocks` 7.64.3 and 7.65.1.
+
+Two things make this trap hard to spot:
+
+1. **The dead modules still ship.** `@decocms/blocks` contains
+   `src/flags/multivariate/message.ts`, `image.ts` and `page.ts`. They export the function, they
+   carry a `@title`, they look like public API. No runtime path reaches them. Checking "does the
+   file exist in the package?" gives a false green.
+2. **The resolver swallows the unknown type without a warning.** An unrecognized
+   `__resolveType` falls through to the *"Unknown type — resolve props but preserve
+   `__resolveType`"* branch, which assumes it is a **site section** and returns the object
+   whole. So the prop arrives at the component as an **object instead of a string**. There is no
+   throw, no `console.warn`, no degraded flag. Build is green, the deploy check is green, HTTP is
+   200 — and the page renders `[object Object]`.
+
+`website/flags/multivariate.ts` is generic over the value type on TanStack, so it is the correct
+choice for a `string`, an `ImageWidget`, or anything else — not just for a page's section array.
+
+```diff
+  {
+-   "__resolveType": "website/flags/multivariate/message.ts",
++   "__resolveType": "website/flags/multivariate.ts",
+    "variants": [
+      { "value": "<p>New copy</p>", "rule": { "__resolveType": "website/matchers/date.ts", "start": "2026-01-01T09:00:00-03:00" } },
+      { "value": "<p>Current copy</p>", "rule": { "__resolveType": "website/matchers/always.ts" } }
+    ]
+  }
+```
+
+**Authoring note.** On TanStack the admin only offers the multivariate wrapper for a page's
+`sections` array (`buildMultivariateFlagSchema` is called exactly once, in `src/cms/schema.ts`),
+and its `__resolveType` enum contains only those same two values. Varying an arbitrary string
+prop is therefore a hand-edit of the block JSON — which is precisely the situation where the
+wrong `__resolveType` gets typed in. Double-check the string against the two supported ones.
 
 ---
 
@@ -56,6 +112,12 @@ The most common one on storefronts is **Section Variants** — swap a specific s
 ---
 
 ## Creating your own flag type
+
+> **Deno/Fresh only.** This section does not apply to TanStack storefronts, where flags are
+> matched by hardcoded `__resolveType` string and a site-declared
+> `flags/multivariate/<name>.ts` is never reached. On TanStack, use
+> `website/flags/multivariate.ts` — it is already generic over the value type, so no custom flag
+> type is needed.
 
 You are not limited to sections/pages/images/messages — any prop of any type can become variant-able. A site declares a new flag type by dropping a file in `flags/multivariate/<name>.ts` that just wires the site's type into `apps/website/utils/multivariate.ts`. The whole file is 8 lines of boilerplate:
 
