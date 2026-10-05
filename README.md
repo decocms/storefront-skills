@@ -12,7 +12,7 @@ These skills are not generic — they cover SEO, performance, images, sitemap, s
 Improves discoverability and indexing of storefront pages for search engines.
 
 - **heading-tags** — Proper use of H1–H6 for hierarchy and keywords on product and category pages.
-- **robots** — `robots.txt` rules and directives for crawlers (allow/block, sitemap reference).
+- **robots** — `robots.txt` rules and directives for crawlers (allow/block, sitemap reference), why you must never block feed/ads landing URLs (Merchant Center "Couldn't verify product pages"), and how to verify a fix in Search Console.
 - **sitemap** — XML sitemaps for products, categories, and key storefront URLs.
 - **structured-data** — Schema.org markup (Product, BreadcrumbList, etc.) for rich results.
 
