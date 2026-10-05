@@ -17,6 +17,7 @@ Use this to manage URL authority and prevent duplicate content issues across the
     - Only allow a unique canonical if the filter creates a distinct, high-value landing page (e.g., a specific "Brand + Category" combination with high search volume).
 - **Product Variations:** - If a product has multiple URLs for different colors/sizes but the content is nearly identical, point the canonical to the **primary product version**.
     - If each variation is a distinct marketing asset with its own unique description and SKU, use a self-referential canonical for each.
+    - Do **not** also `Disallow` the variant URLs in `robots.txt`: a blocked URL is never crawled, so its canonical is never seen — and variant URLs (e.g. VTEX `?idsku=`) are usually the Merchant Center / Ads landing pages. See the `robots` skill.
 - **Cross-Categorization:** When a product lives in multiple categories (e.g., `/sale/product` and `/electronics/product`), pick the **most relevant** or original path as the canonical to avoid splitting authority.
 
 ## Technical Rules
