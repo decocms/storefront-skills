@@ -40,6 +40,7 @@ description: Quickly identify, reproduce, and patch bugs in deco.cx storefronts 
 - Build Figma components with **100% design fidelity**; ensure component `defaultProps` match Figma.
 - Use the **Image fills** tool to get image mapping and fill assets.
 - Ensure created sections are filled with the Figma images.
+- For a full Figma implementation or a fidelity check, use the `figma-to-deco` skill (and `figma-design-fidelity` from decocms/skills for the objective visual diff).
 
 ---
 
