@@ -24,6 +24,11 @@ Keeps storefronts fast and responsive for users and Core Web Vitals.
 - **cache** — Cache HIT rate, cache-control headers, stale-while-revalidate (SWR), and immutable assets.
 - **html-size** — Reducing HTML payload and finding elements that unnecessarily inflate page size.
 
+### 🎨 Design
+Turns Figma designs into storefront sections that match the file pixel for pixel.
+
+- **figma-to-deco** — Figma file to Deco sections, assets, loaders and CMS pages, verified by a pixel diff at every frame width. Works with Figma's official MCP or deco's Figma MCP.
+
 ### 🔧 Troubleshooting
 Quick fixes for isolated, one-off issues that don't fit a dedicated skill. A growing knowledge base — new entries are added as problems are discovered.
 

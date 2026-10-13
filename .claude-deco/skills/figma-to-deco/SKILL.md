@@ -1,11 +1,11 @@
 ---
 name: figma-to-deco
-description: Implement a complete Figma design into a Deco storefront — from reading pages and sections, downloading assets, configuring loaders, to QA with Playwright and performance auditing. Use when the user provides a Figma link and wants it built as a Deco site.
+description: Implement a complete Figma design into a Deco storefront — from reading pages and sections, downloading assets, configuring loaders, to pixel-diff QA with Playwright at every Figma frame width and performance auditing. Works with Figma's official MCP or deco's Figma MCP. Use when the user provides a Figma link and wants it built as a Deco site.
 ---
 
 # Figma to Deco Implementation Skill
 
-End-to-end workflow for turning a Figma design file into a fully functional Deco storefront. Covers section creation, asset management, loader configuration, visual QA (desktop + mobile), performance auditing, and functional E2E checks.
+End-to-end workflow for turning a Figma design file into a fully functional Deco storefront. Covers section creation, asset management, loader configuration, visual QA (pixel diff at every frame width), performance auditing, and functional E2E checks.
 
 ## When to Use This Skill
 
@@ -18,8 +18,32 @@ End-to-end workflow for turning a Figma design file into a fully functional Deco
 
 - A Figma file URL (format: `https://figma.com/design/:fileKey/:fileName`)
 - A Deco storefront repository cloned locally
-- Figma MCP tools available (get_metadata, get_design_context, get_screenshot, get_variable_defs, use_figma)
+- A Figma MCP connected (read tools: `get_metadata`, `get_design_context`, `get_screenshot`, `get_variable_defs`; write tools such as `use_figma` are not needed)
 - Playwright installed for QA phase
+
+For the full fidelity protocol (inventory, extraction, objective visual diff) load the `figma-design-fidelity` skill from decocms/skills.
+
+### Which Figma MCP is connected?
+
+Both work with this skill and share the same read tool names. Check which one you have before Step 1 — a few response shapes differ, and each step below gives both.
+
+| | Figma official MCP | deco Figma MCP |
+|---|---|---|
+| Where | `mcp.figma.com` / the claude.ai Figma connector | deco Studio connection to `https://sites-figma-mcp.deco.site/mcp` (only works through Studio) |
+| Connect | Figma's own OAuth | Studio → Settings → Connections → **Figma** (OAuth; deco's app is under Figma review, so until approved only its owner can authorize), or **Custom Connection**, type HTTP, that URL, Token = a Figma personal access token `figd_…` (Figma → Settings → Security → Personal access tokens, read scopes). Verify with `whoami` |
+| `get_design_context` | Reference code (React + Tailwind by default) + screenshot + download URLs for the assets the code references; `nodeId` required | PNG + one-line-per-layer outline with CSS, `## Design comments`, `## Notes` (screenshot scale, image refs, `Fonts:`) |
+| `get_metadata` without `nodeId` | Page list only; call again with a page id for its frames | Every page + its top-level frames |
+| `download_assets` | One `nodeId` per call → `export` (node render), `rawImages` (original fills), `svgAssets` (vectors) | `nodeIds[]` + `imageRefs[]` → `assets[]` (temporary URLs) |
+| `get_screenshot` | `maxDimension` (default 1024, longer edge) | `scale` |
+| Variable names | Returned | Need Figma Enterprise; otherwise ids + resolved values → map by value |
+| Big frames | Sparse (metadata only); don't set `forceCode`, call the child ids | `… truncated at N layers; query a child node id` |
+| Comments | No comments tool — ask the user for the open designer comments | Included in `get_design_context`; also `get_comments` |
+| `get_motion_context` | Timeline keyframe animations (tracks, easing, CSS `@keyframes`); `recursive` defaults to false | Prototype interactions (trigger, `durationMs`, `cubic-bezier` easing) |
+| `search_design_system` | `queries: [{ entity, query }]` objects (entity = component, variable or style) + `includeLibraryKeys` | `queries[]` + `libraryFileKeys[]` |
+
+On the official MCP, if the `figma:figma-design-to-code` skill is available the server requires loading it before `get_design_context`; load it, and keep following this skill for the workflow and QA.
+
+**Rate limits follow the Figma seat** (both MCPs): View/Collab seats get about 20 design reads per month, Dev/Full seats 10–20 per minute, and one `get_design_context` costs about 2 reads. Plan calls up front, save every output to disk and reuse it, and on a `429` stop and report — do not retry in a loop. See [When Figma is not available](#when-figma-is-not-available).
 
 ---
 
@@ -27,11 +51,11 @@ End-to-end workflow for turning a Figma design file into a fully functional Deco
 
 ```
 Step 1 — Discover & Map     Extract file key, list pages, map frames to sections
-Step 2 — Implement          Create .tsx sections with Tailwind + Preact + Islands
+Step 2 — Implement          Create .tsx sections (Tailwind + Preact + Islands), fonts, states, motion
 Step 3 — Assets             Download images, upload to Deco assets
 Step 4 — Loaders            Configure data sources for dynamic sections
-Step 5 — Visual QA          Playwright screenshots vs Figma baseline (desktop + mobile)
-Step 6 — Adjustments        Fix every mismatch found in QA
+Step 5 — Visual QA          Pixel diff vs Figma baseline at every frame width
+Step 6 — Adjustments        Fix every mismatch until the diff passes
 Step 7 — Performance        Run performance skills + accessibility checks
 Step 8 — Functional E2E     Menu, search, cart, checkout flows (desktop + mobile)
 ```
@@ -60,7 +84,12 @@ Tool: get_metadata
   nodeId: "0:1"
 ```
 
-The response is XML. Look for `<Page>` nodes at the top level. Map Figma pages to Deco routes:
+The response is an XML outline:
+
+- **Official MCP:** without `nodeId` it lists the top-level pages only (`<Page>` nodes); call it again with each page id to get its frames.
+- **deco MCP:** call it without `nodeId` to get every page and its top-level frames in one call. Pages are `canvas` elements with `id` and `name`; frames carry `id`, `name`, `x`, `y`, `width`, `height`.
+
+Map Figma pages to Deco routes:
 
 | Figma Page | Deco Route | Notes |
 |------------|------------|-------|
@@ -88,7 +117,7 @@ Each top-level frame is usually one section. Record for each frame:
 - `nodeId` — needed for get_design_context
 - `name` — becomes the section file name (e.g., `Hero`, `ProductShelf`, `Footer`)
 - `page` — which Figma page it belongs to
-- `width` — detect viewport: frames wider than 1024px are desktop, 375px is the standard mobile width
+- `width` — the frame's own width is its viewport. Implement and verify at exactly that width (e.g. 1920, 1280, 390), not at a fixed 1440/375
 - `position` — ordering on the page (top to bottom = render order)
 
 #### Frame naming patterns
@@ -108,7 +137,9 @@ Designers typically name frames like:
 #### Detecting desktop vs mobile variants
 
 - Look for pairs: `Hero - Desktop` + `Hero - Mobile`
-- If only desktop exists, implement responsive behavior with Tailwind breakpoints
+- **Breakpoints are the frame widths present in the file.** Each frame width is a target the implementation must match exactly
+- Design for widths between frames (tablet, etc.) only if a frame for them exists. If none exists, ask the user how that range should behave instead of inventing a layout
+- If only desktop exists, ask whether a mobile design is coming; if the user says to proceed, implement responsive behavior with Tailwind breakpoints and say it is unverified against Figma
 
 #### Detecting shared vs page-specific
 
@@ -141,6 +172,8 @@ Map tokens to Tailwind:
 | `radius/default` | `borderRadius.DEFAULT` | `8px` |
 
 If the Deco site has a `tailwind.config.ts` or theme, match Figma colors to existing tokens. If new tokens are needed, extend the theme.
+
+**Missing variable names.** On the deco MCP, variable names need Figma Enterprise; without it `get_variable_defs` returns styles plus variable ids with their resolved values. Map by value: match each resolved color/size to the existing theme or Tailwind token with that exact value, and only add a new token when no value matches.
 
 ### 1.5 Identify interactive elements (Islands)
 
@@ -188,12 +221,12 @@ For each section, determine if it needs dynamic data:
 Produce a markdown table before proceeding:
 
 ```markdown
-| # | Section Name       | Figma Page | Node ID   | Type     | Variants        | Data Source | Islands |
+| # | Section Name       | Figma Page | Node ID   | Type     | Frame widths    | Data Source | Islands |
 |---|--------------------|------------|-----------|----------|-----------------|-------------|---------|
-| 1 | Header             | Global     | 123:456   | Shared   | Desktop, Mobile | None        | MobileMenu, SearchBar |
-| 2 | HeroBanner         | Home       | 123:789   | Specific | Desktop, Mobile | Static      | Carousel |
-| 3 | ProductShelf       | Home       | 124:100   | Specific | Desktop only    | productList | None |
-| 4 | CategoryGrid       | PLP        | 125:200   | Specific | Desktop, Mobile | categories  | None |
+| 1 | Header             | Global     | 123:456   | Shared   | 1440, 390       | None        | MobileMenu, SearchBar |
+| 2 | HeroBanner         | Home       | 123:789   | Specific | 1440, 390       | Static      | Carousel |
+| 3 | ProductShelf       | Home       | 124:100   | Specific | 1440 only       | productList | None |
+| 4 | CategoryGrid       | PLP        | 125:200   | Specific | 1440, 390       | categories  | None |
 | ...                                                                                                   |
 ```
 
@@ -229,14 +262,23 @@ Tool: get_design_context
   clientFrameworks: "preact"
 ```
 
-This returns:
-- **Reference code** — HTML/CSS structure to adapt
-- **Screenshot** — visual reference
-- **Asset download URLs** — images used in the section
+What comes back depends on the MCP:
 
-### 2.2 Also get the mobile variant
+- **Official MCP:** reference code (React + Tailwind by default; a reference to adapt to Preact and the site's tokens, never pasted as-is), a screenshot, and download URLs for the assets the code references. It returns no designer comments: ask the user for the open comments on the frames you implement — they are part of the spec.
+- **deco MCP:** a PNG plus a text outline, one line per layer:
+  - `TYPE "name" [id] W×H <Component Prop=Value> styles{…} asset=svg|image(ref) { css }` — the `{ css }` block is the auto-layout translated to flexbox (gap, padding, alignment, sizing). Dividers come out as `border-top`.
+  - Text as `TEXT [id] W×H { css } "content"` — layer names are omitted because they are often stale; trust the content.
+  - `## Design comments` — designer comments pinned to the frame. **Treat them as requirements**, same weight as the pixels.
+  - `## Notes` — the screenshot scale, image refs, and a `Fonts:` line (see 2.5).
+  - Optional params: `includeScreenshot` (default true), `includeComments` (default true), `maxDepth`, `maxNodes` (default 800).
 
-If a mobile variant exists (separate frame), call `get_design_context` on the mobile node too. If there is no separate mobile frame, get a screenshot of the section and use responsive Tailwind classes to implement mobile behavior based on the desktop design proportions.
+**Big frames.** The official MCP returns large nodes sparse (metadata only) — don't set `forceCode`; the deco MCP ends with `… truncated at N layers; query a child node id`. Either way, call `get_metadata` on the frame and then `get_design_context` on each child node id. Never fill the gap by guessing from the screenshot.
+
+**Vertical text trim.** When the output has `text-box: trim-both cap alphabetic` (or the frame's text has Figma's vertical trim on), the box is measured from cap height to baseline, not from the line box. Reproduce it with `[text-box:trim-both_cap_alphabetic]`, or compensate padding by the measured difference where the browser lacks `text-box` support.
+
+### 2.2 Get every frame width
+
+Call `get_design_context` on each frame of the section (one per width in the file — see 1.3) and implement each one at its own width. If only one frame exists, follow the rule in 1.3 (ask before inventing other widths).
 
 ### 2.3 Create section file
 
@@ -294,7 +336,7 @@ export function LoadingFallback() {
 3. **No client-side behavior in sections** — no hooks, no onClick, no useState. Use Islands for interactivity
 4. **Typed props with JSDoc** — `@title` for admin labels, `@hide` for internal props
 5. **Default values** — every prop must have a sensible default matching the Figma design
-6. **Responsive** — use Tailwind breakpoints (`md:`, `lg:`) for desktop/mobile
+6. **Responsive** — use Tailwind breakpoints whose values come from the frame widths in the file (add them to the theme `screens` if the defaults don't match)
 7. **`LoadingFallback` export** — always include a skeleton loader matching section dimensions
 8. **Widget types** — use `ImageWidget` for images, `TextArea` for rich text, `Color` for colors
 9. **100% design fidelity** — match Figma spacing, colors, typography, and layout exactly
@@ -321,13 +363,52 @@ export default function Carousel({ children }: Props) {
 }
 ```
 
+### 2.5 Fonts
+
+List every family + weight the design uses (deco MCP: the `Fonts:` line under `## Notes`; official MCP: the text styles in the reference code / `get_variable_defs`). For each one, confirm the site actually loads that family **and** that weight (`@font-face`, Google Fonts link, or the theme). If one is missing, flag it to the user and ask for the font files or an approved substitute — **never silently substitute** a fallback; a different font breaks every text measurement downstream.
+
+### 2.6 States and variants
+
+A design is more than the default state. Collect:
+
+- Component props from the outline (`<Component Prop=Value>`, e.g. `State=Hover`, `Size=Small`) and the matching variant frames
+- Hover, focus, active, disabled, selected, open/closed (menus, drawers, accordions), empty and error frames
+
+Implement each one (`hover:`, `focus-visible:`, `disabled:`, `aria-*`/`data-*` state classes, or the Island's state) and verify it like any other frame in Step 5. If a state you need has no frame, ask instead of inventing it.
+
+### 2.7 Motion
+
+If the design has motion (carousels, drawers, menus, hover effects), call `get_motion_context` with `fileKey`, `nodeId` and `recursive: true`. The two MCPs return different things:
+
+- **deco MCP:** prototype interactions — trigger, action, destination, `durationMs` and easing as CSS `cubic-bezier`. Use those exact values in the transition (`duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)]`), not Tailwind's defaults. No timeline keyframes.
+- **Official MCP:** timeline keyframe animations (tracks, easing, pre-computed CSS `@keyframes`). Prototype interactions (hover, click, overlays) are not in it — read them from the design or ask. If the `figma:figma-implement-motion` skill exists, load it.
+
+If the call returns nothing for an animation the design implies, ask before inventing one.
+
 ---
 
 ## Step 3: Download & Place Assets
 
 ### 3.1 Collect asset URLs
 
-From each `get_design_context` response, collect the `downloadUrls` map. This contains all images, icons, and illustrations used in the section.
+- **Official MCP:** collect the asset download URLs from each `get_design_context` response, or call `download_assets` with **one** `nodeId` per call. It returns `export` (render of the node), `rawImages` (original fill images, each with its real `format`) and `svgAssets` (vector layers). Without `defaultFormat`/`defaultScale` it uses the node's export settings, else PNG @1x — pass both.
+- **deco MCP:** call `download_assets` with the node ids and image refs from the outline (`asset=svg` / `asset=image(ref)`):
+
+  ```
+  Tool: download_assets
+    fileKey: <fileKey>
+    nodeIds: ["<icon-id>", "<photo-id>"]
+    imageRefs: ["<ref>"]
+    defaultFormat: "svg"     # svg | png | jpg | pdf
+    defaultScale: 2
+  ```
+
+  The response is an `assets[]` list with temporary URLs. Download them right away.
+
+Which export to use:
+
+- **Icons and vector art** (`asset=svg`): export as SVG
+- **Photos**: export the node as PNG/JPG at scale 2 to get the crop exactly as framed; use `imageRefs` when you need the uncropped original upload (e.g. so the CMS editor can re-crop)
 
 ### 3.2 Download images
 
@@ -399,35 +480,36 @@ If the data source is unclear or requires API credentials, **ask the user**:
 
 ## Step 5: Visual QA with Playwright
 
+Visual QA is an **objective pixel diff per frame**, not an eyeball comparison. The full protocol lives in the `figma-design-fidelity` skill; this is the short version.
+
 ### 5.1 Capture Figma baselines
 
-For each section, capture Figma screenshots as baseline:
+For each frame, capture the baseline at **scale 1**, so one image pixel equals one CSS pixel at the frame's width:
+
+| MCP | Call | PNG URL |
+|---|---|---|
+| deco | `download_assets({ fileKey, nodeIds: [frameId], defaultFormat: "png", defaultScale: 1 })` | `assets[0].url` |
+| Official | `download_assets({ fileKey, nodeId: frameId, defaultFormat: "png", defaultScale: 1 })` | `export` |
+
+`get_screenshot` also works: on deco's MCP pass `scale: 1`; on the official MCP pass `maxDimension` = the frame's longer edge (the default 1024 downsizes it). Download the URL right away and check the image width equals the frame width before using it. Save to:
 
 ```
-Tool: get_screenshot
-  fileKey: <fileKey>
-  nodeId: <section nodeId>
-```
-
-Save to:
-
-```
-tests/visual-qa/baselines/desktop/<order>-<SectionName>.png
-tests/visual-qa/baselines/mobile/<order>-<SectionName>.png
+tests/visual-qa/baselines/<width>/<order>-<SectionName>.png
 ```
 
 ### 5.2 Capture implementation screenshots
 
-Use Playwright to screenshot each section at both viewports:
+Use Playwright to screenshot each section at **each frame's own width** (`deviceScaleFactor: 1`), with the same content as the design (same product, same text):
 
 ```typescript
 import { chromium } from "playwright";
 
 const BASE_URL = "http://localhost:8000";
 
+// One entry per frame width in the Figma file (see 1.3)
 const VIEWPORTS = {
-  desktop: { width: 1440, height: 900 },
-  mobile: { width: 375, height: 812 },
+  "1440": { width: 1440, height: 900 },
+  "390": { width: 390, height: 844 },
 };
 
 const PAGES = [
@@ -440,7 +522,7 @@ async function captureAll() {
   const browser = await chromium.launch();
 
   for (const [device, viewport] of Object.entries(VIEWPORTS)) {
-    const context = await browser.newContext({ viewport });
+    const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
     const page = await context.newPage();
 
     for (const p of PAGES) {
@@ -474,9 +556,36 @@ async function captureAll() {
 captureAll();
 ```
 
-### 5.3 Comparison criteria
+### 5.3 Objective pixel diff
 
-For each section, check these aspects against the Figma baseline:
+Diff each baseline with `scripts/visual-diff.mjs` from the `figma-design-fidelity` skill (setup: `npm i -D playwright pixelmatch pngjs`, run it from inside the project). It shoots the page itself at the frame width, so the 5.2 script is only for full-page overviews:
+
+```bash
+node figma-design-fidelity/scripts/visual-diff.mjs --url <page> --baseline <png> \
+  [--selector <css>] [--width <frame px>] [--hover|--focus|--click <css>] [--max-diff 0.02]
+```
+
+It writes `actual.png` and `diff.png` (red = mismatch) and prints JSON with the mismatch `ratio` and `pass`; exit code 1 means the ratio is over `--max-diff`.
+
+- Run every frame at its own `--width`.
+- Run every state frame with the state forced (`--hover ".btn-primary"`, `--focus "input[name=email]"`, `--click "[aria-label='Open menu']"`).
+- **Diff small states at component level** with `--selector` and a baseline exported from the component node: a hover that recolors one button changes under 2% of a full page and passes even when it is wrong.
+- Pin dynamic content (prices, product photos) to match the design where you can; otherwise explain the residual. Don't raise `--max-diff` to make a run pass without writing down why.
+
+Iterate — fix, re-run, re-diff — until every frame passes. Report a table:
+
+```markdown
+| Frame        | Width | Mismatch ratio | Pass |
+|--------------|-------|----------------|------|
+| Home / Hero  | 1440  | 0.4%           | ✅   |
+| Home / Hero  | 390   | 3.1%           | ❌   |
+```
+
+A frame is done only when it passes. "Looks close" is not a pass.
+
+### 5.4 Diagnosing mismatches
+
+Use the diff image to find what is off, then check these aspects against the Figma baseline:
 
 **Layout:**
 - Flex direction matches (row vs column)
@@ -503,19 +612,22 @@ For each section, check these aspects against the Figma baseline:
 - Correct image displayed, aspect ratio, object-fit, border radius, dimensions
 
 **Responsive:**
-- Desktop layout correct at 1440px
-- Mobile layout correct at 375px
-- Breakpoint transitions smooth (no layout jumps at 768px, 1024px)
+- Layout correct at every frame width in the file
+- No layout jumps or horizontal scroll between frame widths
 - Hidden elements properly hidden per viewport
 
-### 5.4 Generate adjustment list
+**States and motion:**
+- Hover, focus, disabled, open states match their frames (2.6)
+- Transitions use the duration and easing from `get_motion_context` (2.7)
+
+### 5.5 Generate adjustment list
 
 Output a structured adjustment table:
 
 ```markdown
 ## Visual QA Adjustments
 
-### Desktop (1440px)
+### Frame 1440px
 
 | # | Section | Issue | Expected | Actual | Fix |
 |---|---------|-------|----------|--------|-----|
@@ -523,7 +635,7 @@ Output a structured adjustment table:
 | 2 | ProductShelf | Card gap | 24px | 16px | Change gap-4 to gap-6 |
 | 3 | Footer | BG color | #1a1a1a | #000000 | Change bg-black to bg-[#1a1a1a] |
 
-### Mobile (375px)
+### Frame 390px
 
 | # | Section | Issue | Expected | Actual | Fix |
 |---|---------|-------|----------|--------|-----|
@@ -538,11 +650,11 @@ Output a structured adjustment table:
 For each item in the adjustment list:
 
 1. Apply the fix to the section `.tsx` file
-2. Re-screenshot with Playwright
-3. Confirm the mismatch is resolved
+2. Re-screenshot with Playwright at the frame width
+3. Re-run the pixel diff and confirm the ratio dropped
 4. Mark the adjustment as `Fixed`
 
-Repeat until all sections pass visual QA on both **desktop (1440px)** and **mobile (375px)** viewports.
+Repeat until every frame passes the pixel diff (5.3) at its own width.
 
 ---
 
@@ -589,7 +701,7 @@ Use skill: `.claude-performance/skills/html-size-optimizer/SKILL.md`
 
 ## Step 8: Functional E2E Testing
 
-Use skill: `.claude-deco/skills/e2e-testing/SKILL.md`
+Use skill: `.claude-deco/skills/ecommerce-qa/SKILL.md` to automate the purchase-journey checks below.
 
 ### 8.1 Header / Navigation
 
@@ -739,10 +851,20 @@ Before marking the implementation as complete, run through the review skill (`.c
 - [ ] Loaders have caching and error handling
 - [ ] All sections export `LoadingFallback`
 - [ ] No breaking changes to existing sections
-- [ ] Desktop and mobile layouts match Figma
+- [ ] Every frame passes the pixel diff at its own width (table from 5.3)
+- [ ] Fonts, states and motion match the design (2.5–2.7); design comments addressed
 - [ ] All images uploaded and placed correctly
 - [ ] Performance audit passed
 - [ ] E2E tests pass on desktop and mobile
+
+---
+
+## When Figma is not available
+
+- **No Figma MCP connected:** stop and ask the user to connect one (see [Which Figma MCP is connected?](#which-figma-mcp-is-connected)). For deco's MCP, check with `whoami`.
+- **`429` (rate limit):** stop and report how many reads were used and what is left to fetch. Don't retry in a loop — on a View/Collab seat the monthly budget is small.
+- **`403`:** the connected Figma account can't open this file. Ask the user to share it with that account or connect one that has access.
+- **Never implement measurements guessed from screenshots.** A screenshot is a check, not a spec; sizes, spacing and colors come from the MCP output.
 
 ---
 
@@ -750,7 +872,8 @@ Before marking the implementation as complete, run through the review skill (`.c
 
 | Skill | When to Use |
 |-------|-------------|
-| `e2e-testing` | Full e-commerce flow testing with performance metrics |
+| `figma-design-fidelity` (decocms/skills) | Full fidelity protocol: inventory, extraction, objective visual diff |
+| `ecommerce-qa` | Automated purchase-journey QA (add to cart, checkout) |
 | `image-optimizer` | Optimize images after asset placement |
 | `html-size-optimizer` | Reduce HTML payload per section |
 | `review` | Pre-publish code review |
