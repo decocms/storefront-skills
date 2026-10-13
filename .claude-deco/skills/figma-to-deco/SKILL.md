@@ -31,11 +31,17 @@ Both work with this skill and share the same read tool names. Check which one yo
 |---|---|---|
 | Where | `mcp.figma.com` / the claude.ai Figma connector | deco Studio connection to `https://sites-figma-mcp.deco.site/mcp` (only works through Studio) |
 | Connect | Figma's own OAuth | Studio → Settings → Connections → **Figma** (OAuth; deco's app is under Figma review, so until approved only its owner can authorize), or **Custom Connection**, type HTTP, that URL, Token = a Figma personal access token `figd_…` (Figma → Settings → Security → Personal access tokens, read scopes). Verify with `whoami` |
-| `get_design_context` | Reference code + screenshot + asset `downloadUrls` | PNG + one-line-per-layer outline with CSS, `## Design comments`, `## Notes` (screenshot scale, image refs, `Fonts:`) |
-| Assets | `downloadUrls` from `get_design_context` | `download_assets` → `assets[]` (temporary URLs) |
+| `get_design_context` | Reference code (React + Tailwind by default) + screenshot + download URLs for the assets the code references; `nodeId` required | PNG + one-line-per-layer outline with CSS, `## Design comments`, `## Notes` (screenshot scale, image refs, `Fonts:`) |
+| `get_metadata` without `nodeId` | Page list only; call again with a page id for its frames | Every page + its top-level frames |
+| `download_assets` | One `nodeId` per call → `export` (node render), `rawImages` (original fills), `svgAssets` (vectors) | `nodeIds[]` + `imageRefs[]` → `assets[]` (temporary URLs) |
+| `get_screenshot` | `maxDimension` (default 1024, longer edge) | `scale` |
 | Variable names | Returned | Need Figma Enterprise; otherwise ids + resolved values → map by value |
-| Big frames | Sparse/metadata fallback | `… truncated at N layers; query a child node id` |
-| Comments | — | Included in `get_design_context`; also `get_comments` |
+| Big frames | Sparse (metadata only); don't set `forceCode`, call the child ids | `… truncated at N layers; query a child node id` |
+| Comments | No comments tool — ask the user for the open designer comments | Included in `get_design_context`; also `get_comments` |
+| `get_motion_context` | Timeline keyframe animations (tracks, easing, CSS `@keyframes`); `recursive` defaults to false | Prototype interactions (trigger, `durationMs`, `cubic-bezier` easing) |
+| `search_design_system` | `queries: [{ entity, query }]` objects (entity = component, variable or style) + `includeLibraryKeys` | `queries[]` + `libraryFileKeys[]` |
+
+On the official MCP, if the `figma:figma-design-to-code` skill is available the server requires loading it before `get_design_context`; load it, and keep following this skill for the workflow and QA.
 
 **Rate limits follow the Figma seat** (both MCPs): View/Collab seats get about 20 design reads per month, Dev/Full seats 10–20 per minute, and one `get_design_context` costs about 2 reads. Plan calls up front, save every output to disk and reuse it, and on a `429` stop and report — do not retry in a loop. See [When Figma is not available](#when-figma-is-not-available).
 
@@ -80,7 +86,7 @@ Tool: get_metadata
 
 The response is an XML outline:
 
-- **Official MCP:** look for the `<Page>` nodes at the top level.
+- **Official MCP:** without `nodeId` it lists the top-level pages only (`<Page>` nodes); call it again with each page id to get its frames.
 - **deco MCP:** call it without `nodeId` to get every page and its top-level frames in one call. Pages are `canvas` elements with `id` and `name`; frames carry `id`, `name`, `x`, `y`, `width`, `height`.
 
 Map Figma pages to Deco routes:
@@ -258,7 +264,7 @@ Tool: get_design_context
 
 What comes back depends on the MCP:
 
-- **Official MCP:** reference code (HTML/CSS structure to adapt), a screenshot, and asset `downloadUrls` (images used in the section).
+- **Official MCP:** reference code (React + Tailwind by default; a reference to adapt to Preact and the site's tokens, never pasted as-is), a screenshot, and download URLs for the assets the code references. It returns no designer comments: ask the user for the open comments on the frames you implement — they are part of the spec.
 - **deco MCP:** a PNG plus a text outline, one line per layer:
   - `TYPE "name" [id] W×H <Component Prop=Value> styles{…} asset=svg|image(ref) { css }` — the `{ css }` block is the auto-layout translated to flexbox (gap, padding, alignment, sizing). Dividers come out as `border-top`.
   - Text as `TEXT [id] W×H { css } "content"` — layer names are omitted because they are often stale; trust the content.
@@ -266,7 +272,7 @@ What comes back depends on the MCP:
   - `## Notes` — the screenshot scale, image refs, and a `Fonts:` line (see 2.5).
   - Optional params: `includeScreenshot` (default true), `includeComments` (default true), `maxDepth`, `maxNodes` (default 800).
 
-**Big frames.** The official MCP may return a sparse/metadata response; the deco MCP ends with `… truncated at N layers; query a child node id`. Either way, call `get_metadata` on the frame and then `get_design_context` on each child node id. Never fill the gap by guessing from the screenshot.
+**Big frames.** The official MCP returns large nodes sparse (metadata only) — don't set `forceCode`; the deco MCP ends with `… truncated at N layers; query a child node id`. Either way, call `get_metadata` on the frame and then `get_design_context` on each child node id. Never fill the gap by guessing from the screenshot.
 
 **Vertical text trim.** When the output has `text-box: trim-both cap alphabetic` (or the frame's text has Figma's vertical trim on), the box is measured from cap height to baseline, not from the line box. Reproduce it with `[text-box:trim-both_cap_alphabetic]`, or compensate padding by the measured difference where the browser lacks `text-box` support.
 
@@ -372,7 +378,12 @@ Implement each one (`hover:`, `focus-visible:`, `disabled:`, `aria-*`/`data-*` s
 
 ### 2.7 Motion
 
-If the design has prototype interactions (carousels, drawers, menus, hover effects), call `get_motion_context` with `fileKey`, `nodeId` and `recursive: true`. It returns each interaction with its trigger, `durationMs` and `cubic-bezier` easing. Use those exact values in the transition (`duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)]`), not Tailwind's defaults. If the call returns no interactions, ask before inventing an animation.
+If the design has motion (carousels, drawers, menus, hover effects), call `get_motion_context` with `fileKey`, `nodeId` and `recursive: true`. The two MCPs return different things:
+
+- **deco MCP:** prototype interactions — trigger, action, destination, `durationMs` and easing as CSS `cubic-bezier`. Use those exact values in the transition (`duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)]`), not Tailwind's defaults. No timeline keyframes.
+- **Official MCP:** timeline keyframe animations (tracks, easing, pre-computed CSS `@keyframes`). Prototype interactions (hover, click, overlays) are not in it — read them from the design or ask. If the `figma:figma-implement-motion` skill exists, load it.
+
+If the call returns nothing for an animation the design implies, ask before inventing one.
 
 ---
 
@@ -380,7 +391,7 @@ If the design has prototype interactions (carousels, drawers, menus, hover effec
 
 ### 3.1 Collect asset URLs
 
-- **Official MCP:** from each `get_design_context` response, collect the `downloadUrls` map. This contains all images, icons, and illustrations used in the section.
+- **Official MCP:** collect the asset download URLs from each `get_design_context` response, or call `download_assets` with **one** `nodeId` per call. It returns `export` (render of the node), `rawImages` (original fill images, each with its real `format`) and `svgAssets` (vector layers). Without `defaultFormat`/`defaultScale` it uses the node's export settings, else PNG @1x — pass both.
 - **deco MCP:** call `download_assets` with the node ids and image refs from the outline (`asset=svg` / `asset=image(ref)`):
 
   ```
@@ -392,7 +403,7 @@ If the design has prototype interactions (carousels, drawers, menus, hover effec
     defaultScale: 2
   ```
 
-  The response is an `assets[]` list with temporary URLs (there is no `downloadUrls` field). Download them right away.
+  The response is an `assets[]` list with temporary URLs. Download them right away.
 
 Which export to use:
 
@@ -475,19 +486,12 @@ Visual QA is an **objective pixel diff per frame**, not an eyeball comparison. T
 
 For each frame, capture the baseline at **scale 1**, so one image pixel equals one CSS pixel at the frame's width:
 
-```
-Tool: download_assets          # deco MCP: PNG export of the frame
-  fileKey: <fileKey>
-  nodeIds: ["<frame nodeId>"]
-  defaultFormat: "png"
-  defaultScale: 1
+| MCP | Call | PNG URL |
+|---|---|---|
+| deco | `download_assets({ fileKey, nodeIds: [frameId], defaultFormat: "png", defaultScale: 1 })` | `assets[0].url` |
+| Official | `download_assets({ fileKey, nodeId: frameId, defaultFormat: "png", defaultScale: 1 })` | `export` |
 
-Tool: get_screenshot           # either MCP
-  fileKey: <fileKey>
-  nodeId: <frame nodeId>
-```
-
-Check the image width equals the frame width before using it (the deco MCP's `## Notes` states the screenshot scale). Save to:
+`get_screenshot` also works: on deco's MCP pass `scale: 1`; on the official MCP pass `maxDimension` = the frame's longer edge (the default 1024 downsizes it). Download the URL right away and check the image width equals the frame width before using it. Save to:
 
 ```
 tests/visual-qa/baselines/<width>/<order>-<SectionName>.png
@@ -554,7 +558,21 @@ captureAll();
 
 ### 5.3 Objective pixel diff
 
-Compare each implementation screenshot with its baseline using `scripts/visual-diff.mjs` from the `figma-design-fidelity` skill (it reports the mismatch ratio and writes a diff image). Iterate — fix, re-capture, re-diff — until every frame is under that skill's threshold. Report a table:
+Diff each baseline with `scripts/visual-diff.mjs` from the `figma-design-fidelity` skill (setup: `npm i -D playwright pixelmatch pngjs`, run it from inside the project). It shoots the page itself at the frame width, so the 5.2 script is only for full-page overviews:
+
+```bash
+node figma-design-fidelity/scripts/visual-diff.mjs --url <page> --baseline <png> \
+  [--selector <css>] [--width <frame px>] [--hover|--focus|--click <css>] [--max-diff 0.02]
+```
+
+It writes `actual.png` and `diff.png` (red = mismatch) and prints JSON with the mismatch `ratio` and `pass`; exit code 1 means the ratio is over `--max-diff`.
+
+- Run every frame at its own `--width`.
+- Run every state frame with the state forced (`--hover ".btn-primary"`, `--focus "input[name=email]"`, `--click "[aria-label='Open menu']"`).
+- **Diff small states at component level** with `--selector` and a baseline exported from the component node: a hover that recolors one button changes under 2% of a full page and passes even when it is wrong.
+- Pin dynamic content (prices, product photos) to match the design where you can; otherwise explain the residual. Don't raise `--max-diff` to make a run pass without writing down why.
+
+Iterate — fix, re-run, re-diff — until every frame passes. Report a table:
 
 ```markdown
 | Frame        | Width | Mismatch ratio | Pass |
