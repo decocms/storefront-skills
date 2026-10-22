@@ -24,6 +24,11 @@ Keeps storefronts fast and responsive for users and Core Web Vitals.
 - **cache** — Cache HIT rate, cache-control headers, stale-while-revalidate (SWR), and immutable assets.
 - **html-size** — Reducing HTML payload and finding elements that unnecessarily inflate page size.
 
+### 🚀 Migration
+Double-checks for sites moving from Fresh/Deno to TanStack Start on Cloudflare Workers.
+
+- **tanstack-go-live-check** — Pre-go-live, cutover-day and first-72h checklist built from the incidents of the stores already live on TanStack (Farm, Granado, Phebo, Monte Carlo, Zee.Dog, Zee.Now): code freeze and content sync, worker memory and content deploy, `DECO_KV` per site, `Set-Cookie` and cache keys, proxied checkout headers, React/SPA pitfalls, GTM and SEO parity. Ships a read-only `preflight.sh`.
+
 ### 🔧 Troubleshooting
 Quick fixes for isolated, one-off issues that don't fit a dedicated skill. A growing knowledge base — new entries are added as problems are discovered.
 
